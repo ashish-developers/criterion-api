@@ -1,0 +1,40 @@
+{
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.7",
+    "express": "^5.3.0",
+    "helmet": "^8.3.0",
+    "image-size": "^2.0.4",
+    "init": "^0.1.2",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.1.0",
+    "nodemon": "^3.1.14",
+    "passport": "^0.7.0",
+    "pg": "^8.23.1",
+    "pg-hstore": "^2.3.4",
+    "sequelize": "^6.37.8",
+    "zod": "^4.6.5"
+  },
+  "name": "api",
+  "version": "1.0.0",
+  "description": "Customized Gifts & Branded Merchandise Platform API (Express + PostgreSQL)",
+  "main": "Index.js",
+  "scripts": {
+    "start": "node Index.js",
+    "dev": "nodemon Index.js",
+    "db:create": "node src/Migrations/runner.js create",
+    "db:migrate": "node src/Migrations/runner.js up",
+    "db:status": "node src/Migrations/runner.js status",
+    "db:reset": "node src/Migrations/runner.js reset && node src/Migrations/runner.js up",
+    "seed": "node src/Seeders/seed.js",
+    "seed:reference": "node src/Seeders/seed.js --reference-only",
+    "seed:demo:remove": "node src/Seeders/seed.js --remove-demo",
+    "setup": "npm run db:create && npm run db:migrate && npm run seed",
+    "test": "node --test --test-concurrency=1 tests/"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
