@@ -12,7 +12,6 @@ const {
   Cart,
   CartItem,
   CouponRedemption,
-  Coupon,
   ProductVariant,
   InventoryMovement,
   Proof,
@@ -655,7 +654,10 @@ async function adminTransition(auth, itemId, { to, note }) {
   return sequelize.transaction(async (transaction) => {
     const item = await OrderItem.findByPk(itemId, { transaction, lock: transaction.LOCK.UPDATE });
     if (!item) throw ApiError.notFound("Order line not found");
-    await transitionItem(item, to, { actorId: auth.user.id, note, transaction });
+    // "resume" returns a held line to the state it was in before the hold.
+    const target = to === "resume" ? item.previous_state : to;
+    if (!target) throw ApiError.conflict("This line is not on hold", "NOT_ON_HOLD");
+    await transitionItem(item, target, { actorId: auth.user.id, note, transaction });
     return item;
   });
 }

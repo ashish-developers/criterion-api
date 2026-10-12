@@ -1,6 +1,15 @@
 // Central, validated access to environment configuration.
 // Every module reads settings from here instead of process.env directly.
-require("dotenv").config({ quiet: true });
+const fs = require("fs");
+const path = require("path");
+
+// Load api/.env from the API folder itself, not the current working directory: process
+// managers (PM2, systemd) often start the app from another directory, and then a cwd-based
+// lookup silently finds no .env. ENV_FILE can point to a different file. Variables already
+// set in the environment always win over the file.
+const ENV_FILE = process.env.ENV_FILE ? path.resolve(process.env.ENV_FILE) : path.join(__dirname, "..", "..", ".env");
+const envFileFound = fs.existsSync(ENV_FILE);
+if (envFileFound) require("dotenv").config({ path: ENV_FILE, quiet: true });
 
 const str = (key, fallback = "") => (process.env[key] ?? fallback).toString().trim();
 const int = (key, fallback) => {
@@ -22,6 +31,8 @@ if (!apiPrefix.startsWith("/")) apiPrefix = `/api/${apiPrefix}`;
 
 const config = {
   appName: str("APP_NAME", "branding"),
+  // Customer-facing name used in emails (matches NEXT_PUBLIC_BRAND_NAME in the web app).
+  brandName: str("BRAND_NAME", "GiftCraft"),
   appEnv,
   isProduction,
   isTest: appEnv === "test",
@@ -33,6 +44,8 @@ const config = {
     .map((o) => o.trim())
     .filter(Boolean),
   trustProxy: bool("TRUST_PROXY", false),
+
+  envFile: { path: ENV_FILE, found: envFileFound },
 
   db: {
     host: str("DB_HOST", "localhost"),
@@ -61,6 +74,18 @@ const config = {
     // SHOW_DEV_OTP is the documented switch; OTP_IN_RESPONSE is honoured for older .env files.
     // Never enabled in production regardless of configuration.
     showDevOtp: !isProduction && (bool("SHOW_DEV_OTP", false) || bool("OTP_IN_RESPONSE", false)),
+  },
+
+  // Accounts created by organisation admins (bulk users, staff).
+  users: {
+    // Development/testing only: initial password for admin-created accounts (e.g. Auth@1234).
+    // Users must change it on first login. Never active in production (see assertConfig).
+    devDefaultPassword: isProduction ? "" : str("DEV_DEFAULT_PASSWORD"),
+    // Development only: include that password in the welcome email.
+    devEmailIncludesPassword: !isProduction && bool("DEV_EMAIL_DEFAULT_PASSWORD", false),
+    // Lifetime of a set-password invitation link.
+    inviteTtlHours: int("INVITE_TTL_HOURS", 72),
+    maxBulkRows: 500,
   },
 
   mail: {
@@ -92,6 +117,10 @@ function assertConfig() {
   if (!config.auth.accessSecret) problems.push("JWT_ACCESS_SECRET is not set");
   if (config.isProduction && config.auth.accessSecret.length < 32)
     problems.push("JWT_ACCESS_SECRET must be at least 32 characters in production");
+  if (config.isProduction && (str("DEV_DEFAULT_PASSWORD") || bool("DEV_EMAIL_DEFAULT_PASSWORD", false)))
+    problems.push("DEV_DEFAULT_PASSWORD / DEV_EMAIL_DEFAULT_PASSWORD must not be set when APP_ENV=production");
+  if (config.users.devDefaultPassword && config.users.devDefaultPassword.length < 8)
+    problems.push("DEV_DEFAULT_PASSWORD must be at least 8 characters");
   if (config.isProduction && config.payments.provider === "mock")
     problems.push("PAYMENT_PROVIDER=mock is not allowed when APP_ENV=production");
   return problems;

@@ -18,6 +18,9 @@ router.get("/challenges/:challengeId", rateLimit({ name: "challenge", windowMs: 
 router.post("/forgot-password", rateLimit({ name: "forgot", windowMs: 60 * MIN, max: 5, by: byEmail }), validate({ body: v.forgotPassword }), authController.forgotPassword);
 router.post("/forgot-password/verify", rateLimit({ name: "reset-verify", windowMs: 10 * MIN, max: 15, by: byChallenge }), validate({ body: v.verifyOtp }), authController.verifyResetOtp);
 router.post("/reset-password", rateLimit({ name: "reset", windowMs: 15 * MIN, max: 10 }), validate({ body: v.resetPassword }), authController.resetPassword);
+// Set-password invitations for accounts created by organisation admins.
+router.post("/invitations/preview", rateLimit({ name: "invite-preview", windowMs: MIN, max: 20 }), validate({ body: v.inviteToken }), authController.invitationPreview);
+router.post("/invitations/accept", rateLimit({ name: "invite-accept", windowMs: 15 * MIN, max: 10 }), validate({ body: v.acceptInvite }), authController.acceptInvitation);
 router.post("/refresh", rateLimit({ name: "refresh", windowMs: MIN, max: 30 }), authController.refresh);
 router.get("/me", requireAuth, authController.me);
 router.post("/logout", optionalAuth, authController.logout);

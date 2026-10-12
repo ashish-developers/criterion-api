@@ -5,11 +5,15 @@ const q = require("../Controllers/quoteController");
 const v = require("../Validators/commerceValidators");
 const { validate } = require("../Middleware/validate");
 const { requireAuth, requireCompany, requirePermission } = require("../Middleware/auth");
+const { mountUserAdmin } = require("./userAdminRoutes");
 
 router.use(requireAuth, requireCompany, requirePermission("company.view"));
 router.get("/dashboard", c.dashboard);
 router.get("/company", c.profile);
 router.put("/company", requirePermission("company.manage"), validate({ body: v.companyUpdate }), c.updateProfile);
+// User management (Business Admin only): approvers and buyers of the admin's own company.
+mountUserAdmin(router, "/users", "company", [requirePermission("company.team.manage")]);
+
 router.get("/team", c.team);
 router.post("/team", requirePermission("company.team.manage"), validate({ body: v.teamInvite }), c.invite);
 router.patch("/team/:id", requirePermission("company.team.manage"), validate({ body: v.teamUpdate }), c.updateMember);

@@ -6,6 +6,8 @@ const v = require("../Validators/opsValidators");
 const cv = require("../Validators/commerceValidators");
 const { validate } = require("../Middleware/validate");
 const { requireAuth, requirePermission: can } = require("../Middleware/auth");
+const { mountUserAdmin } = require("./userAdminRoutes");
+const tax = require("../Controllers/taxController");
 
 const id = validate({ params: v.idParam });
 router.use(requireAuth);
@@ -68,6 +70,19 @@ router.post("/settlements/:id/status", can("settlements.manage"), id, validate({
 router.get("/quotes", can("quotes.view"), validate({ query: cv.quoteList }), c.quotes);
 
 // People
+// Tax master (GST rates, HSN/SAC codes)
+router.get("/tax/rates", can("settings.manage"), tax.rates);
+router.post("/tax/rates", can("settings.manage"), validate({ body: v.taxRate }), tax.createRate);
+router.put("/tax/rates/:id", can("settings.manage"), validate({ params: v.intId, body: v.taxRate }), tax.updateRate);
+router.post("/tax/rates/:id/active", can("settings.manage"), validate({ params: v.intId, body: v.activeToggle }), tax.rateActive);
+router.get("/tax/hsn", can("settings.manage"), validate({ query: v.hsnList }), tax.hsnList);
+router.post("/tax/hsn", can("settings.manage"), validate({ body: v.hsnCodeRow }), tax.createHsn);
+router.put("/tax/hsn/:id", can("settings.manage"), validate({ params: v.intId, body: v.hsnCodeRow }), tax.updateHsn);
+router.post("/tax/hsn/:id/active", can("settings.manage"), validate({ params: v.intId, body: v.activeToggle }), tax.hsnActive);
+
+// Platform user management (Platform Admin only): support agents and production staff.
+mountUserAdmin(router, "/platform-users", "platform", [can("roles.manage")]);
+
 router.get("/users", can("customers.view"), c.users);
 router.post("/users/staff", can("roles.manage"), validate({ body: v.staffCreate }), c.createStaff);
 router.post("/users/:id/status", can("customers.manage"), id, validate({ body: v.userStatus }), c.userStatus);

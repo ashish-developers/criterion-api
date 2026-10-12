@@ -485,6 +485,11 @@ async function seedDemo() {
       ],
       { transaction }
     );
+    // Link demo products to the tax master (seeded with the reference data).
+    await sequelize.query(
+      `UPDATE products p SET tax_rate_id = t.id FROM tax_rates t WHERE p.tax_rate_id IS NULL AND p.is_demo AND t.rate = p.gst_rate AND t.is_active`,
+      { transaction }
+    );
     console.log(`Demo data: ${USERS.length} users, ${COMPANIES.length} companies, ${VENDORS.length} vendors, ${Object.keys(ctx.products).length + KITS.length} products`);
   });
 }

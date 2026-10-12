@@ -1,5 +1,6 @@
 // Vendor portal (FR-VP-01, 05, 07): application with KYC, profile and capabilities,
 // listings, staff, holidays and the performance dashboard.
+const taxService = require("./taxService");
 const { Op } = require("sequelize");
 const {
   sequelize,
@@ -184,7 +185,8 @@ async function saveListing(auth, data, id) {
       base_cost_paise: data.pricePaise,
       packaging_cost_paise: 0,
       hsn_code: data.hsnCode,
-      gst_rate: data.gstRate,
+      // GST from the tax master (chosen rate, else HSN mapping, else category default).
+      ...(await taxService.resolveForProduct({ taxRateId: data.taxRateId, gstRate: data.gstRate, hsnCode: data.hsnCode, categoryId: category.id, currentTaxRateId: product?.tax_rate_id }, transaction)),
       moq: data.moq,
       max_instant_qty: data.maxInstantQty || 199,
       lead_time_days: data.leadTimeDays,

@@ -1,5 +1,6 @@
 // Platform administration (FR-AD-01, 04, 05, 07): catalogue CRUD, customers, companies,
 // vendor approval, coupons, inventory, settings, roles and CMS. Callers audit-log writes.
+const taxService = require("./taxService");
 const { Op } = require("sequelize");
 const {
   sequelize,
@@ -27,6 +28,7 @@ const {
   AuditLog,
   Session,
   Order,
+  TaxRate,
 } = require("../Models");
 const ApiError = require("../Utils/ApiError");
 const accessService = require("./accessService");
@@ -53,12 +55,17 @@ async function listCategories() {
 }
 
 async function saveCategory(data, id) {
+  if (data.defaultTaxRateId) {
+    const rate = await TaxRate.findByPk(data.defaultTaxRateId);
+    if (!rate || !rate.is_active) throw ApiError.unprocessable("Choose an active GST rate", "TAX_RATE_INVALID", { defaultTaxRateId: "Choose an active GST rate" });
+  }
   const fields = {
     name: data.name,
     parent_id: data.parentId || null,
     description: data.description || null,
     image: data.image || null,
     default_lead_time_days: data.defaultLeadTimeDays ?? 5,
+    default_tax_rate_id: data.defaultTaxRateId || null,
     sort_order: data.sortOrder ?? 0,
     is_active: data.isActive !== false,
   };
@@ -111,6 +118,7 @@ async function productForEdit(id) {
   const product = await Product.findByPk(id, {
     include: [
       { model: Category, as: "category" },
+      { model: TaxRate, as: "taxRate" },
       { model: Vendor, as: "vendor", attributes: ["id", "business_name"] },
       { model: ProductVariant, as: "variants" },
       { model: PrintArea, as: "printAreas" },
@@ -138,7 +146,6 @@ async function saveProduct(auth, data, id) {
       packaging_cost_paise: data.packagingCostPaise || 0,
       express_uplift_pct: data.expressUpliftPct ?? 20,
       hsn_code: data.hsnCode,
-      gst_rate: data.gstRate,
       moq: data.moq,
       max_instant_qty: data.maxInstantQty,
       lead_time_days: data.leadTimeDays,
@@ -161,6 +168,10 @@ async function saveProduct(auth, data, id) {
     if (id) {
       product = await Product.findByPk(id, { transaction, paranoid: false });
       if (!product) throw ApiError.notFound("Product not found");
+    }
+    // GST comes from the tax master: chosen rate, else the HSN mapping, else the category default.
+    Object.assign(fields, await taxService.resolveForProduct({ taxRateId: data.taxRateId, gstRate: data.gstRate, hsnCode: data.hsnCode, categoryId: category.id, currentTaxRateId: product?.tax_rate_id }, transaction));
+    if (id) {
       await product.update({ ...fields, slug: await uniqueSlug(Product, data.slug || slugify(data.name), id, transaction) }, { transaction });
     } else {
       product = await Product.create(
@@ -337,8 +348,17 @@ async function setUserStatus(auth, userId, status) {
   if (userId === auth.user.id) throw ApiError.forbidden("You cannot change your own account status");
   const user = await User.findByPk(userId);
   if (!user) throw ApiError.notFound("User not found");
-  await user.update({ status });
-  if (status === "suspended") await Session.update({ revoked_at: new Date() }, { where: { user_id: userId, revoked_at: null } });
+  if (status === "suspended") {
+    if (user.status !== "suspended") {
+      // Recorded as a platform suspension: organisation admins cannot lift it.
+      await user.update({ status, status_before_deactivation: user.status, deactivated_scope: "platform", deactivated_at: new Date() });
+    } else if (user.deactivated_scope !== "platform") {
+      await user.update({ deactivated_scope: "platform" });
+    }
+    await Session.update({ revoked_at: new Date() }, { where: { user_id: userId, revoked_at: null } });
+  } else {
+    await user.update({ status, status_before_deactivation: null, deactivated_scope: null, deactivated_at: null });
+  }
   return user;
 }
 

@@ -10,6 +10,8 @@ function registerAll(register) {
   register("proof-reminders", () => proofService.sendReminders(), HOUR);
   register("close-delivered-lines", () => orderService.closeDeliveredLines(), 6 * HOUR);
   register("escalate-at-risk-jobs", () => productionService.escalateAtRisk(), 3 * HOUR);
+  // Queued transactional email (invitations); retries failed sends with backoff.
+  register("email-outbox", () => require("./emailOutboxService").processDue(), 30 * 1000);
 }
 
 module.exports = { registerAll };

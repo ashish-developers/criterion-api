@@ -145,9 +145,29 @@ const Category = define("Category", "categories", {
   description: T.text,
   image: T.text,
   default_lead_time_days: T.int,
+  default_tax_rate_id: T.int,
   sort_order: T.int,
   is_active: T.bool,
   is_demo: T.bool,
+});
+
+// Tax master (GST rates and HSN/SAC codes).
+const TaxRate = define("TaxRate", "tax_rates", {
+  id: T.intPk,
+  name: T.str,
+  rate: T.decimal,
+  description: T.str,
+  is_active: T.bool,
+  sort_order: T.int,
+});
+
+const HsnCode = define("HsnCode", "hsn_codes", {
+  id: T.intPk,
+  code: T.str,
+  kind: T.str,
+  description: T.str,
+  tax_rate_id: T.int,
+  is_active: T.bool,
 });
 
 const Product = define(
@@ -168,6 +188,7 @@ const Product = define(
     express_uplift_pct: T.decimal,
     hsn_code: T.str,
     gst_rate: T.decimal,
+    tax_rate_id: T.int,
     moq: T.int,
     max_instant_qty: T.int,
     lead_time_days: T.int,
@@ -314,4 +335,6 @@ module.exports = {
   ProductSource,
   InventoryMovement,
   Wishlist,
+  TaxRate,
+  HsnCode,
 };

@@ -36,6 +36,14 @@ const vendorProfile = vendorApplication.partial().extend({ capabilities: z.array
 const holidays = z.object({ holidays: z.array(z.object({ date, note: optionalText(160) })).max(100) });
 const staff = z.object({ name: z.string().trim().min(2).max(120), email: z.string().trim().email().max(190), phone });
 
+// GST: the rate comes from the tax master (see taxService.resolveForProduct). A form sends the
+// chosen taxRateId; gstRate (a percentage) is still accepted and matched to an active rate.
+const hsnCode = z.string().trim().regex(/^\d{4}(\d{2}){0,2}$/, "Enter a 4, 6 or 8 digit HSN/SAC code");
+const taxChoice = {
+  taxRateId: z.coerce.number().int().positive().optional().nullable(),
+  gstRate: z.coerce.number().min(0).max(100).optional().nullable(),
+};
+
 const listing = z.object({
   categoryId: uuid,
   name: z.string().trim().min(3).max(200),
@@ -43,8 +51,8 @@ const listing = z.object({
   description: optionalText(5000),
   images: z.array(z.string().max(300)).max(10).optional(),
   pricePaise: paise.refine((v) => v > 0, "Enter a price"),
-  hsnCode: z.string().trim().regex(/^\d{4,8}$/, "Enter a 4-8 digit HSN code"),
-  gstRate: z.coerce.number().refine((v) => [0, 5, 12, 18, 28].includes(v), "Choose a GST rate"),
+  hsnCode: hsnCode,
+  ...taxChoice,
   moq: z.coerce.number().int().min(1),
   maxInstantQty: z.coerce.number().int().min(1).optional(),
   leadTimeDays: z.coerce.number().int().min(1).max(60),
@@ -96,7 +104,7 @@ const assign = z.object({
   notes: optionalText(1000),
 }).refine((d) => d.source === "in_house" || d.vendorId, { path: ["vendorId"], message: "Choose a vendor" });
 const proofCreate = z.object({ orderItemId: uuid, previewAssetId: uuid, printFileAssetId: uuid.optional().nullable(), notes: optionalText(1000) });
-const itemTransition = z.object({ to: z.enum(["on_hold", "placed", "payment_pending", "artwork_pending", "proof_sent", "proof_approved", "assigned", "in_production", "quality_check", "packed", "dispatched", "delivered", "closed", "cancelled", "refunded", "rto"]), note: z.string().trim().min(3).max(500) });
+const itemTransition = z.object({ to: z.enum(["resume", "on_hold", "placed", "payment_pending", "artwork_pending", "proof_sent", "proof_approved", "assigned", "in_production", "quality_check", "packed", "dispatched", "delivered", "closed", "cancelled", "refunded", "rto"]), note: z.string().trim().min(3).max(500) });
 const offlinePayment = z.object({ amountPaise: paise.refine((v) => v > 0, "Enter an amount"), reference: z.string().trim().min(3).max(80), note: optionalText(300) });
 const refundRequest = z.object({ orderId: uuid, orderItemId: uuid.optional().nullable(), amountPaise: paise.refine((v) => v > 0, "Enter an amount"), reason: z.string().trim().min(3).max(500), ticketId: uuid.optional().nullable() });
 const refundDecision = z.object({ approve: z.boolean(), note: optionalText(500) });
@@ -110,9 +118,30 @@ const category = z.object({
   description: optionalText(1000),
   image: optionalText(300),
   defaultLeadTimeDays: z.coerce.number().int().min(1).max(60).optional(),
+  // GST rate for products in this category that have no HSN mapping (tax master).
+  defaultTaxRateId: z.coerce.number().int().positive().optional().nullable(),
   sortOrder: z.coerce.number().int().optional(),
   isActive: z.boolean().optional(),
 });
+
+// Tax master
+const taxRate = z.object({
+  name: z.string().trim().min(2, "Enter a name").max(60),
+  rate: z.coerce.number({ message: "Enter the rate" }).min(0, "Must be 0 or more").max(100, "Must be 100 or less").refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, "Use at most two decimals"),
+  description: optionalText(300),
+  sortOrder: z.coerce.number().int().min(0).max(100000).optional(),
+});
+const hsnCodeRow = z.object({
+  code: hsnCode.optional(),
+  kind: z.enum(["HSN", "SAC"]).default("HSN"),
+  description: z.string().trim().min(3, "Describe the goods or service").max(300),
+  taxRateId: z.coerce.number({ message: "Choose a GST rate" }).int().positive("Choose a GST rate"),
+  // Also move every product using this code to the new rate.
+  applyToProducts: z.boolean().default(false),
+});
+const hsnList = listQuery.extend({ taxRateId: z.coerce.number().int().positive().optional(), status: z.enum(["active", "inactive"]).optional() });
+const activeToggle = z.object({ active: z.boolean() });
+const intId = z.object({ id: z.coerce.number().int().positive() });
 
 const product = z.object({
   categoryId: uuid,
@@ -125,8 +154,8 @@ const product = z.object({
   baseCostPaise: paise,
   packagingCostPaise: paise.default(0),
   expressUpliftPct: z.coerce.number().min(0).max(100).default(20),
-  hsnCode: z.string().trim().regex(/^\d{4,8}$/, "Enter a 4-8 digit HSN code"),
-  gstRate: z.coerce.number().refine((v) => [0, 5, 12, 18, 28].includes(v), "Choose a GST rate"),
+  hsnCode: hsnCode,
+  ...taxChoice,
   moq: z.coerce.number().int().min(1),
   maxInstantQty: z.coerce.number().int().min(1),
   leadTimeDays: z.coerce.number().int().min(1).max(60),
@@ -234,6 +263,11 @@ const reportQuery = z.object({ from: date.optional(), to: date.optional(), forma
 const reviewModerate = z.object({ status: z.enum(["approved", "rejected"]) });
 
 module.exports = {
+  taxRate,
+  hsnCodeRow,
+  hsnList,
+  activeToggle,
+  intId,
   vendorApplication,
   vendorProfile,
   holidays,

@@ -9,7 +9,8 @@ const TYPES = {
   svg: {
     mime: "image/svg+xml",
     test: (b) => {
-      const head = b.subarray(0, 2048).toString("utf8").replace(/^﻿/, "").trimStart();
+      // trimStart() also removes a UTF-8 byte-order mark (U+FEFF counts as whitespace).
+      const head = b.subarray(0, 2048).toString("utf8").trimStart();
       return /^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE svg[^>]*>\s*)?<svg[\s>]/i.test(head);
     },
   },

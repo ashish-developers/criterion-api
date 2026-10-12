@@ -37,9 +37,16 @@ async function resolve(req) {
   return context;
 }
 
+// While an account still uses a temporary password, the API only allows reading the session,
+// changing the password and signing out (enforced here, not just hidden in the UI).
+const PASSWORD_CHANGE_ALLOWED = ["/auth/me", "/auth/change-password", "/auth/logout"].map((p) => `${config.apiPrefix}${p}`);
+
 async function requireAuth(req, res, next) {
   const context = await resolve(req);
   if (!context) throw ApiError.unauthorized();
+  if (context.user.must_change_password && !PASSWORD_CHANGE_ALLOWED.includes(req.originalUrl.split("?")[0])) {
+    throw ApiError.forbidden("Change your temporary password to continue", "PASSWORD_CHANGE_REQUIRED");
+  }
   req.auth = context;
   next();
 }
@@ -50,6 +57,8 @@ async function optionalAuth(req, res, next) {
   } catch {
     req.auth = null;
   }
+  // A temporary-password session acts as anonymous on optional-auth routes (except sign-out).
+  if (req.auth?.user.must_change_password && !PASSWORD_CHANGE_ALLOWED.includes(req.originalUrl.split("?")[0])) req.auth = null;
   next();
 }
 

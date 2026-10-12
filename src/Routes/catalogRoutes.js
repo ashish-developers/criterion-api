@@ -10,6 +10,8 @@ router.use(publicLimit);
 router.get("/categories", catalogController.categories);
 router.get("/categories/:slug", validate({ params: v.slugParam }), catalogController.category);
 router.get("/methods", catalogController.methods);
+// Active GST rates and HSN/SAC codes from the tax master (public reference data for forms).
+router.get("/tax-options", require("../Controllers/taxController").options);
 router.get("/products", validate({ query: v.productSearch }), catalogController.products);
 router.get("/products/:slug", validate({ params: v.slugParam }), catalogController.product);
 router.get("/products/:id/price", validate({ params: v.idParam, query: v.priceQuery }), catalogController.price);

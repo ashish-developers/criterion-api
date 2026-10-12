@@ -4,6 +4,7 @@ const c = require("../Controllers/vendorController");
 const v = require("../Validators/opsValidators");
 const { validate } = require("../Middleware/validate");
 const { requireAuth, requireVendor, requirePermission } = require("../Middleware/auth");
+const { mountUserAdmin } = require("./userAdminRoutes");
 
 router.use(requireAuth);
 router.get("/me", c.me);
@@ -14,6 +15,9 @@ const approved = requireVendor({ approved: true });
 const member = requireVendor({ approved: false });
 router.put("/profile", member, requirePermission("vendor.profile.manage"), validate({ body: v.vendorProfile }), c.updateProfile);
 router.put("/holidays", approved, requirePermission("vendor.profile.manage"), validate({ body: v.holidays }), c.setHolidays);
+// User management (Vendor Admin only): staff of the admin's own vendor.
+mountUserAdmin(router, "/users", "vendor", [approved, requirePermission("vendor.team.manage")]);
+
 router.get("/staff", member, requirePermission("vendor.team.manage"), c.staff);
 router.post("/staff", approved, requirePermission("vendor.team.manage"), validate({ body: v.staff }), c.addStaff);
 router.delete("/staff/:id", approved, requirePermission("vendor.team.manage"), validate({ params: v.intIdParam }), c.removeStaff);

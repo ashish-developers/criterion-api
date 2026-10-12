@@ -1,3 +1,4 @@
+const invitationService = require("../Services/invitationService");
 const authService = require("../Services/authService");
 const accessService = require("../Services/accessService");
 const { config } = require("../Config/env");
@@ -100,6 +101,14 @@ const changePassword = async (req, res) => {
   return ok(res, null, "Password changed. Other devices have been signed out.");
 };
 
+const invitationPreview = async (req, res) => ok(res, await invitationService.preview(req.body.token));
+
+const acceptInvitation = async (req, res) => {
+  const result = await invitationService.accept(req.body.token, req.body.password);
+  clearSessionCookies(res);
+  return ok(res, result, "Password set. Sign in with your email and new password.");
+};
+
 const csrf = async (req, res) => {
   const token = issueCsrfCookie(res, req.cookies?.csrf_token);
   return ok(res, { csrfToken: token });
@@ -118,5 +127,7 @@ module.exports = {
   me,
   logout,
   changePassword,
+  invitationPreview,
+  acceptInvitation,
   csrf,
 };

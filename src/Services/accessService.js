@@ -29,7 +29,7 @@ function invalidateRoleCache() {
 
 async function loadContext(userId) {
   const [rows] = await sequelize.query(
-    `SELECT u.id, u.name, u.email, u.phone, u.account_type, u.status, u.avatar_url, u.email_verified_at,
+    `SELECT u.id, u.name, u.email, u.phone, u.account_type, u.status, u.avatar_url, u.email_verified_at, u.must_change_password,
             r.code AS role_code, ur.scope_type, ur.scope_id
        FROM users u
        LEFT JOIN user_roles ur ON ur.user_id = u.id
@@ -48,6 +48,7 @@ async function loadContext(userId) {
     status: first.status,
     avatar_url: first.avatar_url,
     email_verified_at: first.email_verified_at,
+    must_change_password: Boolean(first.must_change_password),
   };
   const roles = rows.filter((r) => r.role_code).map((r) => ({ code: r.role_code, scopeType: r.scope_type, scopeId: r.scope_id }));
 
@@ -75,6 +76,8 @@ async function loadContext(userId) {
 // Where to send a user after sign-in, in priority order.
 function homePath(context) {
   if (!context) return "/login";
+  // Accounts created with a temporary password choose their own before anything else.
+  if (context.user.must_change_password) return "/change-password";
   if (context.portals.includes("admin")) return "/admin/dashboard";
   if (context.user.account_type === "vendor") {
     return context.vendorId ? "/vendor/dashboard" : "/vendor/onboarding";
@@ -95,6 +98,7 @@ function publicContext(context) {
     vendorRole: context.vendorRole,
     portals: context.portals,
     homePath: homePath(context),
+    mustChangePassword: context.user.must_change_password,
   };
 }
 

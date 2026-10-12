@@ -1,6 +1,6 @@
 // Reference data required in every environment (production included):
-// roles, permissions, decoration methods, settings defaults and policy pages.
-const { sequelize, Role, Permission, RolePermission, DecorationMethod, Setting, CmsPage } = require("../Models");
+// roles, permissions, decoration methods, settings defaults, policy pages and the tax master.
+const { sequelize, Role, Permission, RolePermission, DecorationMethod, Setting, CmsPage, TaxRate, HsnCode } = require("../Models");
 const { PERMISSIONS, ROLES } = require("../Config/roles");
 const settingsService = require("../Services/settingsService");
 const accessService = require("../Services/accessService");
@@ -90,6 +90,58 @@ const PAGES = [
   { slug: "faq-cancel", type: "faq", title: "Can I cancel a customised order?", body: "You can cancel free of charge until you approve the proof. After approval, setup and blank costs are deducted. Items already in production cannot be cancelled.", sort_order: 6 },
 ];
 
+// Starting GST rates. Admins manage them under Settings -> Taxes; seeding only adds rates that
+// are missing and never changes ones an admin has edited. Confirm rates with a tax adviser:
+// the September 2025 GST rationalisation moved most goods to 5% or 18% and added 40%.
+const TAX_RATES = [
+  { name: "Nil rated (0%)", rate: 0, description: "Exempt or nil-rated supplies" },
+  { name: "GST 5%", rate: 5, description: "Merit rate" },
+  { name: "GST 12%", rate: 12, description: "Earlier slab; most goods moved to 5% or 18% from 22 Sep 2025. Review before use." },
+  { name: "GST 18%", rate: 18, description: "Standard rate" },
+  { name: "GST 28%", rate: 28, description: "Earlier slab; most goods moved to 18% or 40% from 22 Sep 2025. Review before use." },
+  { name: "GST 40%", rate: 40, description: "Special rate (luxury and sin goods)" },
+];
+
+// HSN codes for the gift and merchandise range, with the rates the catalogue uses today.
+const HSN_CODES = [
+  ["4202", "Trunks, suitcases, handbags, backpacks and similar containers", 18],
+  ["4414", "Wooden frames for paintings, photographs, mirrors or similar objects", 12],
+  ["4420", "Wood marquetry, caskets, statuettes and other ornaments of wood", 12],
+  ["4819", "Cartons, boxes and cases of paper or paperboard (gift boxes, hampers)", 18],
+  ["4820", "Registers, notebooks, diaries, planners and similar articles of paper", 18],
+  ["6105", "Men's or boys' shirts, knitted or crocheted (polo shirts)", 5],
+  ["6109", "T-shirts, singlets and other vests, knitted or crocheted", 5],
+  ["6110", "Jerseys, pullovers, sweatshirts and hoodies, knitted or crocheted", 5],
+  ["6305", "Sacks and bags of textile materials used for packing (tote bags)", 5],
+  ["6307", "Other made-up textile articles (lanyards, badges, pouches)", 12],
+  ["6505", "Hats and other headgear, knitted or made up from textile", 5],
+  ["6912", "Ceramic tableware and kitchenware other than porcelain (mugs)", 12],
+  ["7323", "Table, kitchen or household articles of iron or steel (bottles, tumblers)", 12],
+  ["7326", "Other articles of iron or steel (metal keychains)", 18],
+  ["8306", "Statuettes, trophies and other ornaments of base metal", 18],
+  ["9608", "Ball point pens, felt-tipped pens and markers", 18],
+];
+
+async function seedTaxMaster(transaction) {
+  for (const def of TAX_RATES) {
+    const existing = await TaxRate.findOne({ where: { name: def.name }, transaction });
+    const sameRate = await TaxRate.findOne({ where: { rate: def.rate, is_active: true }, transaction });
+    if (!existing && !sameRate) await TaxRate.create({ ...def, sort_order: Math.round(def.rate * 100), is_active: true }, { transaction });
+    // Rates created by the migration backfill have no description yet.
+    else if ((existing || sameRate).name === def.name && !(existing || sameRate).description) await (existing || sameRate).update({ description: def.description }, { transaction });
+  }
+  for (const [code, description, rate] of HSN_CODES) {
+    const existing = await HsnCode.findOne({ where: { code }, transaction });
+    if (existing) {
+      // Codes created by the migration backfill only have a placeholder description.
+      if (existing.description === `HSN ${code}`) await existing.update({ description }, { transaction });
+      continue;
+    }
+    const taxRate = await TaxRate.findOne({ where: { rate, is_active: true }, transaction });
+    if (taxRate) await HsnCode.create({ code, kind: "HSN", description, tax_rate_id: taxRate.id, is_active: true }, { transaction });
+  }
+}
+
 async function seedReference() {
   await sequelize.transaction(async (transaction) => {
     for (const [code, [module, description]] of Object.entries(PERMISSIONS)) {
@@ -121,6 +173,8 @@ async function seedReference() {
       const existing = await CmsPage.findOne({ where: { slug: page.slug }, transaction });
       if (!existing) await CmsPage.create(page, { transaction });
     }
+
+    await seedTaxMaster(transaction);
   });
   accessService.invalidateRoleCache();
   settingsService.clearCache();

@@ -42,7 +42,8 @@ const listQuery = z.object({
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   q: z.string().trim().max(120).optional(),
-  status: z.string().trim().max(40).optional(),
+  // A single status or a comma-separated list (e.g. the production board).
+  status: z.string().trim().max(300).regex(/^[a-z_,]*$/, "Invalid status filter").optional(),
   sort: z.string().trim().max(40).optional(),
 });
 

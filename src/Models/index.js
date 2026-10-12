@@ -24,6 +24,11 @@ m.Company.hasMany(m.Address, { foreignKey: "company_id", as: "addresses" });
 m.User.hasMany(m.Address, { foreignKey: "user_id", as: "addresses" });
 m.Company.hasMany(m.BrandKit, { foreignKey: "company_id", as: "brandKits" });
 
+// ---- Tax master
+m.HsnCode.belongsTo(m.TaxRate, { foreignKey: "tax_rate_id", as: "taxRate" });
+m.Product.belongsTo(m.TaxRate, { foreignKey: "tax_rate_id", as: "taxRate" });
+m.Category.belongsTo(m.TaxRate, { foreignKey: "default_tax_rate_id", as: "defaultTaxRate" });
+
 // ---- Vendors
 m.Vendor.belongsTo(m.User, { foreignKey: "owner_user_id", as: "owner" });
 m.Vendor.hasMany(m.VendorUser, { foreignKey: "vendor_id", as: "members" });

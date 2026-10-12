@@ -33,4 +33,9 @@ const changePassword = z
   .object({ currentPassword: z.string().min(1, "Enter your current password"), newPassword: password, confirmPassword: z.string() })
   .refine((d) => d.newPassword === d.confirmPassword, { path: ["confirmPassword"], message: "Passwords do not match" });
 
-module.exports = { register, login, verifyOtp, challenge, forgotPassword, resetPassword, changePassword };
+const inviteToken = z.object({ token: z.string().min(20).max(200) });
+const acceptInvite = z
+  .object({ token: z.string().min(20).max(200), password, confirmPassword: z.string() })
+  .refine((d) => d.password === d.confirmPassword, { path: ["confirmPassword"], message: "Passwords do not match" });
+
+module.exports = { register, login, verifyOtp, challenge, forgotPassword, resetPassword, changePassword, inviteToken, acceptInvite };

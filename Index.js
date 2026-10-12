@@ -13,13 +13,14 @@ async function startServer() {
   try {
     await sequelize.authenticate();
   } catch (error) {
-    console.error(`Database connection failed: ${error.message}`);
+    // Says which settings were used and the likely cause (run `npm run db:check` to retry).
+    require("./src/Config/dbDiagnostics").describe(error).forEach((line) => console.error(line));
     process.exit(1);
   }
 
   const app = createApp();
   // Express 5 passes listen errors (e.g. port already in use) to this callback instead of throwing.
-  app.listen(config.port, (error) => {
+  const server = app.listen(config.port, (error) => {
     if (error) {
       console.error(
         error.code === "EADDRINUSE"
@@ -32,6 +33,24 @@ async function startServer() {
     if (config.otp.showDevOtp) console.log("Development OTP display is ENABLED (SHOW_DEV_OTP). Never enable this in production.");
     scheduler.start();
   });
+
+  // Graceful shutdown (deploys, process managers, Ctrl+C): stop accepting connections, let
+  // in-flight requests finish, then close the database pool. Forced exit after 10 seconds.
+  let stopping = false;
+  const shutdown = (signal) => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`${signal} received: shutting down`);
+    setTimeout(() => process.exit(1), 10_000).unref();
+    server.close(() => {
+      sequelize
+        .close()
+        .catch(() => undefined)
+        .finally(() => process.exit(0));
+    });
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 startServer();

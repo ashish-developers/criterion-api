@@ -304,7 +304,8 @@ async function resetPassword({ challengeId, resetToken, password }) {
     throw ApiError.badRequest("This reset link has expired. Start again.", undefined, "RESET_INVALID");
   }
   await sequelize.transaction(async (transaction) => {
-    await User.update({ password_hash: await hashPassword(password) }, { where: { id: challenge.user_id }, transaction });
+    // The user chose this password, so any first-login change requirement is satisfied.
+    await User.update({ password_hash: await hashPassword(password), must_change_password: false }, { where: { id: challenge.user_id }, transaction });
     // One use only, and sign out every existing session.
     await challenge.update({ reset_token_hash: null }, { transaction });
     await Session.update({ revoked_at: new Date() }, { where: { user_id: challenge.user_id, revoked_at: null }, transaction });
@@ -317,7 +318,13 @@ async function changePassword(userId, { currentPassword, newPassword }, currentS
   if (!(await verifyPassword(currentPassword, user.password_hash))) {
     throw ApiError.badRequest("Current password is incorrect", { currentPassword: "Current password is incorrect" }, "INVALID_PASSWORD");
   }
-  await user.update({ password_hash: await hashPassword(newPassword) });
+  if (currentPassword === newPassword) {
+    throw ApiError.badRequest("Choose a password different from your current one", { newPassword: "Choose a different password" }, "PASSWORD_UNCHANGED");
+  }
+  if (config.users.devDefaultPassword && newPassword === config.users.devDefaultPassword) {
+    throw ApiError.badRequest("Choose your own password, not the temporary one", { newPassword: "Choose your own password" }, "PASSWORD_TEMPORARY");
+  }
+  await user.update({ password_hash: await hashPassword(newPassword), must_change_password: false });
   await Session.update(
     { revoked_at: new Date() },
     { where: { user_id: userId, revoked_at: null, id: { [Op.ne]: currentSessionId } } }
