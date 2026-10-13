@@ -11,6 +11,7 @@
     "nodemailer": "^10.1.0",
     "pg": "^8.23.1",
     "pg-hstore": "^2.3.4",
+    "sanitize-html": "^2.18.0",
     "sequelize": "^6.37.8",
     "zod": "^4.6.5"
   },

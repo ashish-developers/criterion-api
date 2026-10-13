@@ -115,4 +115,7 @@ router.put("/pages/:id", can("cms.manage"), id, validate({ body: v.page }), c.sa
 router.delete("/pages/:id", can("cms.manage"), id, c.deletePage);
 router.get("/audit-logs", can("audit.view"), c.audit);
 
+// Blog management (posts, workflow, categories, tags, permissions)
+router.use("/blog", require("./blogAdminRoutes"));
+
 module.exports = router;

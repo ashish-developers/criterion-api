@@ -490,7 +490,8 @@ async function seedDemo() {
       `UPDATE products p SET tax_rate_id = t.id FROM tax_rates t WHERE p.tax_rate_id IS NULL AND p.is_demo AND t.rate = p.gst_rate AND t.is_active`,
       { transaction }
     );
-    console.log(`Demo data: ${USERS.length} users, ${COMPANIES.length} companies, ${VENDORS.length} vendors, ${Object.keys(ctx.products).length + KITS.length} products`);
+    const blogPosts = await require("./demoBlog").seedDemoBlog(ctx, transaction);
+    console.log(`Demo data: ${USERS.length} users, ${COMPANIES.length} companies, ${VENDORS.length} vendors, ${Object.keys(ctx.products).length + KITS.length} products, ${blogPosts} blog posts`);
   });
 }
 
@@ -526,6 +527,9 @@ async function removeDemo() {
     await q(`DELETE FROM vendors WHERE is_demo`);
     await q(`DELETE FROM companies WHERE is_demo`);
     await q(`DELETE FROM artwork_assets WHERE owner_user_id IN (${demoUsers})`);
+    await q(`DELETE FROM blog_posts WHERE author_id IN (${demoUsers}) OR created_by IN (${demoUsers})`);
+    await q(`UPDATE blog_posts SET updated_by = NULL WHERE updated_by IN (${demoUsers})`);
+    await q(`UPDATE blog_posts SET reviewed_by = NULL WHERE reviewed_by IN (${demoUsers})`);
     await q(`DELETE FROM audit_logs WHERE actor_user_id IN (${demoUsers})`);
     await q(`UPDATE settings SET updated_by = NULL WHERE updated_by IN (${demoUsers})`);
     await q(`UPDATE cms_pages SET updated_by = NULL WHERE updated_by IN (${demoUsers})`);

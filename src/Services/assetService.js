@@ -16,7 +16,12 @@ const KINDS = {
   proof: { types: ["png", "jpg", "pdf"], permission: ["proofs.manage"] },
   print_file: { types: ["png", "pdf", "svg"], permission: ["proofs.manage"] },
   product_image: { types: ["png", "jpg", "svg"], permission: ["catalogue.manage", "vendor.listings.manage"] },
+  // Featured, social and in-article blog images. Raster only: SVG is never embedded in posts.
+  blog_image: { types: ["png", "jpg", "webp"], permission: ["blog.create", "blog.edit_own", "blog.edit_all"], maxMb: 5 },
 };
+
+// Served without sign-in (storefront and blog pages).
+const PUBLIC_KINDS = ["product_image", "blog_image"];
 
 async function upload(auth, file, { kind = "artwork", companyAsset = false, brandKitId = null } = {}) {
   if (!file) throw ApiError.badRequest("Choose a file to upload", undefined, "FILE_REQUIRED");
@@ -31,6 +36,9 @@ async function upload(auth, file, { kind = "artwork", companyAsset = false, bran
       `This file type is not supported. Upload ${def.types.map((t) => t.toUpperCase()).join(", ")}.`,
       "FILE_TYPE_REJECTED"
     );
+  }
+  if (def.maxMb && file.size > def.maxMb * 1024 * 1024) {
+    throw ApiError.unprocessable(`Images must be ${def.maxMb} MB or smaller`, "FILE_TOO_LARGE");
   }
   const scan = inspector.scan(file.buffer, detected.ext);
   if (!scan.clean) throw ApiError.unprocessable(scan.reason, "FILE_REJECTED_BY_SCAN");
@@ -50,7 +58,7 @@ async function upload(auth, file, { kind = "artwork", companyAsset = false, bran
     height_px: height,
     checksum: sha256(file.buffer),
     scan_status: "clean",
-    is_public: kind === "product_image",
+    is_public: PUBLIC_KINDS.includes(kind),
   });
   return present(asset);
 }

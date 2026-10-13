@@ -54,6 +54,49 @@ const PERMISSIONS = {
   "tickets.manage": ["support", "Manage all support tickets"],
   "cms.manage": ["settings", "Manage CMS pages, policies and FAQs"],
   "reviews.moderate": ["catalogue", "Moderate product reviews"],
+
+  // Blog. Platform admins hold all of these; other platform users get them individually
+  // (user_permissions), assigned under Blog -> Permissions.
+  "blog.view": ["blog", "View blog posts in the management dashboard"],
+  "blog.create": ["blog", "Create blog posts and save drafts"],
+  "blog.edit_own": ["blog", "Edit own blog posts"],
+  "blog.edit_all": ["blog", "Edit any blog post"],
+  "blog.delete_own": ["blog", "Delete own blog posts"],
+  "blog.delete_all": ["blog", "Delete any blog post"],
+  "blog.publish": ["blog", "Publish blog posts"],
+  "blog.unpublish": ["blog", "Unpublish and archive blog posts"],
+  "blog.schedule": ["blog", "Schedule blog posts for future publication"],
+  "blog.approve": ["blog", "Approve or reject blog posts submitted for review"],
+  "blog.taxonomy.manage": ["blog", "Manage blog categories and tags"],
+  "blog.feature": ["blog", "Mark blog posts as featured"],
+  "blog.analytics.view": ["blog", "View blog statistics and engagement"],
+  "blog.permissions.manage": ["blog", "Assign blog permissions to platform users"],
+};
+
+const BLOG_PERMISSIONS = Object.keys(PERMISSIONS).filter((p) => p.startsWith("blog."));
+// What the Platform Admin may grant to individual platform users. Approving posts and
+// managing blog permissions stay with roles (the platform admin), so a granted user can
+// never approve their own work or widen their own access.
+const BLOG_GRANTABLE = BLOG_PERMISSIONS.filter((p) => !["blog.approve", "blog.permissions.manage"].includes(p));
+
+// Predefined permission groups offered when assigning blog access.
+const BLOG_PRESETS = {
+  viewer: { label: "Viewer", description: "Read-only access to the blog dashboard", permissions: ["blog.view"] },
+  contributor: {
+    label: "Contributor",
+    description: "Writes drafts and submits them for approval",
+    permissions: ["blog.view", "blog.create", "blog.edit_own", "blog.delete_own"],
+  },
+  author: {
+    label: "Author",
+    description: "Writes, publishes and schedules their own posts",
+    permissions: ["blog.view", "blog.create", "blog.edit_own", "blog.delete_own", "blog.publish", "blog.unpublish", "blog.schedule"],
+  },
+  editor: {
+    label: "Editor",
+    description: "Manages every post, categories, tags, featured posts and analytics",
+    permissions: BLOG_GRANTABLE,
+  },
 };
 
 const CUSTOMER_BASE = ["shop.purchase", "designs.manage_own", "quotes.request", "tickets.create", "reviews.write"];
@@ -120,4 +163,4 @@ const ROLES = {
 // Refunds above this amount raised by support need finance (refunds.approve) sign-off.
 const SUPPORT_REFUND_LIMIT_PAISE = 200000;
 
-module.exports = { PERMISSIONS, ROLES, SUPPORT_REFUND_LIMIT_PAISE };
+module.exports = { PERMISSIONS, ROLES, SUPPORT_REFUND_LIMIT_PAISE, BLOG_PERMISSIONS, BLOG_GRANTABLE, BLOG_PRESETS };

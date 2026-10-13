@@ -125,4 +125,17 @@ if (require.main === module) {
     });
 }
 
-module.exports = { createDatabase, up, status, reset };
+/** Migration files not yet applied to the configured database (all of them on an empty database). */
+async function pending() {
+  const c = client();
+  await c.connect();
+  try {
+    const exists = (await c.query("SELECT to_regclass('public.schema_migrations') AS t")).rows[0].t;
+    const applied = exists ? new Set((await c.query("SELECT name FROM schema_migrations")).rows.map((r) => r.name)) : new Set();
+    return migrationFiles().filter((f) => !applied.has(f));
+  } finally {
+    await c.end();
+  }
+}
+
+module.exports = { createDatabase, up, status, reset, pending };

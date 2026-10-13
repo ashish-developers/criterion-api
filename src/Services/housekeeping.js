@@ -12,6 +12,8 @@ function registerAll(register) {
   register("escalate-at-risk-jobs", () => productionService.escalateAtRisk(), 3 * HOUR);
   // Queued transactional email (invitations); retries failed sends with backoff.
   register("email-outbox", () => require("./emailOutboxService").processDue(), 30 * 1000);
+  // Scheduled blog posts go live (public pages also show due posts before this runs).
+  register("publish-scheduled-blog-posts", () => require("./blogService").publishDue(), 60 * 1000);
 }
 
 module.exports = { registerAll };

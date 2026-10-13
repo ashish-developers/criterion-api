@@ -27,6 +27,15 @@ function invalidateRoleCache() {
   rolePermissionCache = null;
 }
 
+// Not cached: grants are read per request, so a revoked permission stops working immediately.
+async function userPermissions(userId) {
+  const [rows] = await sequelize.query(
+    `SELECT p.code FROM user_permissions up JOIN permissions p ON p.id = up.permission_id WHERE up.user_id = :userId`,
+    { replacements: { userId } }
+  );
+  return rows.map((r) => r.code);
+}
+
 async function loadContext(userId) {
   const [rows] = await sequelize.query(
     `SELECT u.id, u.name, u.email, u.phone, u.account_type, u.status, u.avatar_url, u.email_verified_at, u.must_change_password,
@@ -55,6 +64,11 @@ async function loadContext(userId) {
   const map = await rolePermissions();
   const permissions = new Set();
   for (const role of roles) for (const p of map.get(role.code) || []) permissions.add(p);
+  // Individual grants (e.g. blog permissions given to a platform user) only apply to staff,
+  // so a grant left behind on a customer or vendor account can never take effect.
+  if (roles.some((r) => r.scopeType === "platform")) {
+    for (const p of await userPermissions(userId)) permissions.add(p);
+  }
 
   const companyRole = roles.find((r) => r.scopeType === "company");
   const vendorRole = roles.find((r) => r.scopeType === "vendor");
@@ -102,4 +116,4 @@ function publicContext(context) {
   };
 }
 
-module.exports = { loadContext, invalidateRoleCache, homePath, publicContext };
+module.exports = { loadContext, invalidateRoleCache, userPermissions, homePath, publicContext };

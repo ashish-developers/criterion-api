@@ -3,8 +3,9 @@ const identity = require("./identity");
 const catalogue = require("./catalogue");
 const commerce = require("./commerce");
 const operations = require("./operations");
+const blog = require("./blog");
 
-const m = { ...identity, ...catalogue, ...commerce, ...operations };
+const m = { ...identity, ...catalogue, ...commerce, ...operations, ...blog };
 
 // ---- Identity
 m.User.hasMany(m.UserRole, { foreignKey: "user_id", as: "userRoles" });
@@ -144,5 +145,13 @@ m.TicketMessage.belongsTo(m.User, { foreignKey: "user_id", as: "user" });
 m.Review.belongsTo(m.User, { foreignKey: "user_id", as: "user" });
 m.Review.belongsTo(m.Product, { foreignKey: "product_id", as: "product" });
 m.AuditLog.belongsTo(m.User, { foreignKey: "actor_user_id", as: "actor" });
+
+// ---- Blog
+m.UserPermission.belongsTo(m.Permission, { foreignKey: "permission_id", as: "permission" });
+m.BlogPost.belongsTo(m.User, { foreignKey: "author_id", as: "author" });
+m.BlogPost.belongsTo(m.BlogCategory, { foreignKey: "category_id", as: "category" });
+m.BlogPost.belongsToMany(m.BlogTag, { through: m.BlogPostTag, foreignKey: "post_id", otherKey: "tag_id", as: "tags" });
+m.BlogTag.belongsToMany(m.BlogPost, { through: m.BlogPostTag, foreignKey: "tag_id", otherKey: "post_id", as: "posts" });
+m.BlogPostHistory.belongsTo(m.User, { foreignKey: "actor_user_id", as: "actor" });
 
 module.exports = { sequelize, ...m };

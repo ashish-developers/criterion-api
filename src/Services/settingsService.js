@@ -49,6 +49,10 @@ const DEFAULTS = {
     description: "Notification channels",
     value: { email: true, sms: false },
   },
+  blog: {
+    description: "Blog workflow: when approval is required, posts by users without blog.approve must be approved before they can be published or scheduled",
+    value: { approval_required: true },
+  },
 };
 
 let cache = null;
