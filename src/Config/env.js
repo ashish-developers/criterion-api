@@ -36,10 +36,10 @@ const config = {
   appEnv,
   isProduction,
   isTest: appEnv === "test",
-  port: int("APP_PORT", 4000),
+  port: int("APP_PORT", 4001,
   apiPrefix,
-  webAppUrl: str("WEB_APP_URL", "http://localhost:3000"),
-  corsOrigins: str("CORS_ORIGINS", str("WEB_APP_URL", "http://localhost:3000"))
+  webAppUrl: str("WEB_APP_URL", "http://localhost:3001"),
+  corsOrigins: str("CORS_ORIGINS", str("WEB_APP_URL", "http://localhost:3001"))
     .split(",")
     .map((o) => o.trim())
     .filter(Boolean),
