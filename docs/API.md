@@ -1,6 +1,6 @@
 # API reference
 
-REST API for the GiftCraft platform. Base path: `/api/v1`, set by `API_VERSION`. The web app reaches it through the Next.js rewrite, so in the browser it is same-origin at `http://localhost:3000/api/v1`. Direct calls go to `http://localhost:4000/api/v1`.
+REST API for the MingoKart platform. Base path: `/api/v1`, set by `API_VERSION`. The web app reaches it through the Next.js rewrite, so in the browser it is same-origin at `http://localhost:3000/api/v1`. Direct calls go to `http://localhost:4000/api/v1`.
 
 `GET /api/v1/health` returns `{ status: true, data: { env } }` and needs no session.
 

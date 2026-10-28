@@ -32,11 +32,11 @@ if (!apiPrefix.startsWith("/")) apiPrefix = `/api/${apiPrefix}`;
 const config = {
   appName: str("APP_NAME", "branding"),
   // Customer-facing name used in emails (matches NEXT_PUBLIC_BRAND_NAME in the web app).
-  brandName: str("BRAND_NAME", "GiftCraft"),
+  brandName: str("BRAND_NAME", "MingoKart"),
   appEnv,
   isProduction,
   isTest: appEnv === "test",
-  port: int("APP_PORT", 4001,
+  port: int("APP_PORT", 4001),
   apiPrefix,
   webAppUrl: str("WEB_APP_URL", "http://localhost:3001"),
   corsOrigins: str("CORS_ORIGINS", str("WEB_APP_URL", "http://localhost:3001"))
