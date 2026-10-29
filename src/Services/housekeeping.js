@@ -14,6 +14,8 @@ function registerAll(register) {
   register("email-outbox", () => require("./emailOutboxService").processDue(), 30 * 1000);
   // Scheduled blog posts go live (public pages also show due posts before this runs).
   register("publish-scheduled-blog-posts", () => require("./blogService").publishDue(), 60 * 1000);
+  // Visiting card payment intents left open for a day are marked abandoned.
+  register("expire-visiting-card-intents", () => require("./vcPaymentService").expireStaleIntents(), 6 * HOUR);
 }
 
 module.exports = { registerAll };

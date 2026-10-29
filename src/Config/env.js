@@ -36,7 +36,7 @@ const config = {
   appEnv,
   isProduction,
   isTest: appEnv === "test",
-  port: int("APP_PORT", 4001,
+  port: int("APP_PORT", 4001),
   apiPrefix,
   webAppUrl: str("WEB_APP_URL", "http://localhost:3001"),
   corsOrigins: str("CORS_ORIGINS", str("WEB_APP_URL", "http://localhost:3001"))

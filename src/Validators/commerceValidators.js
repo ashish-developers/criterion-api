@@ -4,7 +4,12 @@ const paise = z.coerce.number().int().min(0).max(10_000_000_000);
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
 const assetIds = z.array(uuid).max(20).optional().default([]);
 
-const profile = z.object({ name: z.string().trim().min(2).max(120), phone, marketingOptIn: z.boolean().optional() });
+const profile = z.object({
+  name: z.string().trim().min(2).max(120),
+  phone,
+  designation: z.string().trim().max(120).nullable().optional().transform((v) => (v === undefined ? undefined : v || null)),
+  marketingOptIn: z.boolean().optional(),
+});
 const addressBody = address.extend({ forCompany: z.boolean().optional() });
 
 // Canvas layers are stored as JSON; validate their shape and bounds strictly.
@@ -77,7 +82,10 @@ const checkout = z.object({
   idempotencyKey: z.string().min(8).max(80),
 });
 
-const orderList = listQuery.extend({ scope: z.enum(["mine", "company", "all"]).default("mine") });
+// `module` picks which status family `status` refers to (see Services/orderFilters.js);
+// without it, `status` is the order status as before.
+const orderList = listQuery.extend({ scope: z.enum(["mine", "company", "all"]).default("mine"), module: z.enum(["order", "payment", "production", "shipping"]).optional() });
+const orderFilterOptions = z.object({ scope: z.enum(["mine", "company", "all"]).default("mine") });
 const cancel = z.object({ reason: z.string().trim().min(3, "Tell us why you are cancelling").max(500), itemIds: z.array(uuid).optional() });
 const approval = z.object({ approve: z.boolean(), comment: optionalText(500) });
 const proofDecision = z.object({ comment: optionalText(1000) });
@@ -148,6 +156,48 @@ const quoteReject = z.object({ reason: optionalText(1000) });
 const message = z.object({ body: z.string().trim().min(1).max(4000) });
 const quoteList = listQuery.extend({ scope: z.enum(["mine", "all"]).default("mine") });
 
+// Staff returns a request to the customer for correction.
+const QUOTE_CORRECTION_CATEGORIES = ["pricing", "quantity", "product", "artwork", "customization", "tax", "delivery", "payment_terms", "other"];
+const quoteReturn = z.object({
+  reason: z.string().trim().min(5, "Explain what needs correcting (at least 5 characters)").max(1000),
+  category: z.enum(QUOTE_CORRECTION_CATEGORIES, { error: "Choose a correction category" }),
+  instructions: optionalText(2000),
+  internalNote: optionalText(2000),
+});
+// Staff rejects a quotation: the reason is mandatory and shown to the customer.
+const quoteDecline = z.object({ reason: z.string().trim().min(5, "Give a reason for the rejection (at least 5 characters)").max(1000), internalNote: optionalText(2000) });
+// Text a customer may edit: omitted stays undefined (unchanged), "" or null clears it.
+const editableText = (max) => z.string().trim().max(max).nullable().optional().transform((v) => (v === undefined ? undefined : v || null));
+// The customer corrects a returned request. Only request details are editable: prices, terms,
+// status and staff notes are not part of this schema, so they cannot be changed here.
+const quoteResubmit = z.object({
+  comment: z.string().trim().min(3, "Tell us what you changed (at least 3 characters)").max(1000),
+  title: z.string().trim().min(3).max(200).optional(),
+  deadline: date.optional().nullable(),
+  budgetPaise: paise.optional().nullable(),
+  deliveryLocations: editableText(1000),
+  deliveryPincode: pincode.optional().nullable(),
+  notes: editableText(2000),
+  items: z
+    .array(
+      z.object({
+        id: uuid,
+        remove: z.boolean().optional(),
+        variantId: uuid.optional().nullable(),
+        methodId: z.coerce.number().int().optional().nullable(),
+        quantity: z.coerce.number().int().min(1).max(1000000).optional(),
+        sizeBreakdown,
+        printAreaCount: z.coerce.number().int().min(0).max(10).optional(),
+        artworkAssetIds: z.array(uuid).max(20).optional(),
+        notes: editableText(1000),
+      })
+    )
+    .max(30)
+    .optional()
+    .default([]),
+});
+const quoteDocument = z.object({ version: z.coerce.number().int().min(1).optional() });
+
 const ticketCreate = z.object({
   orderId: uuid.optional().nullable(),
   orderItemId: uuid.optional().nullable(),
@@ -196,6 +246,7 @@ module.exports = {
   cartQuery,
   checkout,
   orderList,
+  orderFilterOptions,
   cancel,
   approval,
   proofDecision,
@@ -209,6 +260,11 @@ module.exports = {
   quoteReject,
   message,
   quoteList,
+  quoteReturn,
+  quoteDecline,
+  quoteResubmit,
+  quoteDocument,
+  QUOTE_CORRECTION_CATEGORIES,
   ticketCreate,
   ticketReply,
   ticketList,

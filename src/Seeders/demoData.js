@@ -510,6 +510,12 @@ async function removeDemo() {
     await q(`UPDATE quotes SET order_id = NULL WHERE order_id IN (${demoOrders})`);
     await q(`UPDATE order_items SET approved_proof_id = NULL, reprint_of_item_id = NULL WHERE order_id IN (${demoOrders})`);
     await q(`DELETE FROM orders WHERE id IN (${demoOrders})`);
+    const demoVcOrders = `SELECT id FROM vc_orders WHERE is_demo OR user_id IN (${demoUsers}) OR company_id IN (SELECT id FROM companies WHERE is_demo)`;
+    await q(`DELETE FROM vc_invoices WHERE order_id IN (${demoVcOrders})`);
+    await q(`DELETE FROM vc_payments WHERE order_id IN (${demoVcOrders})`);
+    await q(`DELETE FROM vc_orders WHERE id IN (${demoVcOrders})`);
+    await q(`DELETE FROM vc_designs WHERE user_id IN (${demoUsers}) OR company_id IN (SELECT id FROM companies WHERE is_demo)`);
+    await q(`UPDATE vc_templates SET created_by = NULL, updated_by = NULL WHERE created_by IN (${demoUsers}) OR updated_by IN (${demoUsers})`);
     await q(`UPDATE quotes SET current_version_id = NULL WHERE requester_user_id IN (${demoUsers})`);
     await q(`DELETE FROM quotes WHERE requester_user_id IN (${demoUsers})`);
     await q(`UPDATE designs SET current_version_id = NULL WHERE user_id IN (${demoUsers})`);

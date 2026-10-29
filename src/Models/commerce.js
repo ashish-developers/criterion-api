@@ -114,6 +114,7 @@ const Quote = define("Quote", "quotes", {
   is_repeat_of: T.uuid,
   first_response_at: T.time,
   recipients: T.json,
+  request_revision: T.int,
 });
 
 const QuoteRequestItem = define(
@@ -155,6 +156,7 @@ const QuoteVersion = define(
     notes: T.text,
     created_by: T.uuid,
     sent_at: T.time,
+    request_revision: T.int,
   },
   { timestamps: "created" }
 );
@@ -186,6 +188,30 @@ const QuoteMessage = define(
   "QuoteMessage",
   "quote_messages",
   { id: T.bigPk, quote_id: T.uuid, user_id: T.uuid, body: T.text },
+  { timestamps: "created" }
+);
+
+// Append-only quotation history (status changes, reasons, request diffs and snapshots).
+const QuoteEvent = define(
+  "QuoteEvent",
+  "quote_events",
+  {
+    id: T.bigPk,
+    quote_id: T.uuid,
+    actor_user_id: T.uuid,
+    actor_role: T.str,
+    event: T.str,
+    from_status: T.str,
+    to_status: T.str,
+    request_revision: T.int,
+    version_no: T.int,
+    category: T.str,
+    reason: T.text,
+    instructions: T.text,
+    internal_note: T.text,
+    changes: T.json,
+    snapshot: T.json,
+  },
   { timestamps: "created" }
 );
 
@@ -232,6 +258,11 @@ const Order = define("Order", "orders", {
   closed_at: T.time,
   is_demo: T.bool,
   recipients: T.json,
+  confirmation_status: T.str,
+  confirmed_by: T.uuid,
+  confirmed_at: T.time,
+  confirmation_note: T.text,
+  closed_by: T.uuid,
 });
 
 const OrderItem = define("OrderItem", "order_items", {
@@ -325,6 +356,7 @@ module.exports = {
   QuoteVersion,
   QuoteItem,
   QuoteMessage,
+  QuoteEvent,
   Order,
   OrderItem,
   OrderEvent,

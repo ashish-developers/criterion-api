@@ -220,6 +220,74 @@ async function assign(auth, { orderItemId, source, vendorId, dueDate, agreedCost
   });
 }
 
+/**
+ * Order lines waiting for a production source: proof approved (or no customisation), payment
+ * terms met, order not cancelled. Oldest first, so nothing waits unnoticed.
+ */
+async function readyToAssign({ page = 1, limit = 50 } = {}) {
+  const [rows] = await sequelize.query(
+    `SELECT i.id, i.order_id, o.order_number, i.line_no, i.product_snapshot->>'name' AS name, i.product_snapshot->>'image' AS image,
+            i.quantity, i.due_date, o.deliver_by, o.payment_terms, o.amount_paid_paise, o.total_paise, dm.name AS method,
+            COALESCE(c.name, u.name) AS customer, (o.company_id IS NOT NULL) AS is_business, i.updated_at AS ready_since,
+            (SELECT count(*)::int FROM production_jobs j WHERE j.order_item_id = i.id AND j.status IN ('rejected','cancelled')) AS previous_attempts,
+            count(*) OVER()::int AS total
+       FROM order_items i
+       JOIN orders o ON o.id = i.order_id
+       JOIN users u ON u.id = o.user_id
+       LEFT JOIN companies c ON c.id = o.company_id
+       LEFT JOIN decoration_methods dm ON dm.id = i.method_id
+      WHERE i.state = 'proof_approved' AND o.status NOT IN ('cancelled','refunded')
+      ORDER BY COALESCE(i.due_date, o.deliver_by) ASC NULLS LAST, i.updated_at ASC
+      LIMIT :limit OFFSET :offset`,
+    { replacements: { limit, offset: (page - 1) * limit } }
+  );
+  const items = rows
+    .filter((r) => orderService().paymentConditionMet({ payment_terms: r.payment_terms, amount_paid_paise: Number(r.amount_paid_paise), total_paise: Number(r.total_paise) }))
+    .map((r) => ({
+      id: r.id,
+      orderId: r.order_id,
+      orderNumber: r.order_number,
+      lineNo: r.line_no,
+      name: r.name,
+      image: r.image,
+      quantity: r.quantity,
+      method: r.method,
+      customer: r.customer,
+      isBusiness: r.is_business,
+      dueDate: r.due_date,
+      deliverBy: r.deliver_by,
+      readySince: r.ready_since,
+      previousAttempts: r.previous_attempts,
+    }));
+  return { items, total: rows[0]?.total || 0 };
+}
+
+/**
+ * Staff take a job back before production starts (the vendor has not answered, cannot meet
+ * the date, or the order was re-planned). The job is cancelled, the producer is told, and the
+ * line returns to the assignment queue for a new source.
+ */
+async function unassign(auth, jobId, { reason }) {
+  return sequelize.transaction(async (transaction) => {
+    const job = await ProductionJob.findByPk(jobId, { transaction, lock: transaction.LOCK.UPDATE });
+    if (!job) throw ApiError.notFound("Job not found");
+    if (!["assigned", "accepted"].includes(job.status)) {
+      throw ApiError.conflict("Only jobs that have not started production can be reassigned", "JOB_STARTED");
+    }
+    const item = await OrderItem.findByPk(job.order_item_id, { transaction, lock: transaction.LOCK.UPDATE });
+    await job.update({ status: "cancelled" }, { transaction });
+    await JobEvent.create({ job_id: job.id, event: "unassigned", status: "cancelled", note: reason, actor_user_id: auth.user.id }, { transaction });
+    await item.update({ fulfilment_source: null, vendor_id: null }, { transaction });
+    if (item.state === "assigned") {
+      await orderService().transitionItem(item, "proof_approved", { actorId: auth.user.id, note: `Taken back from ${job.source === "vendor" ? "the production partner" : "in-house production"}: ${reason}`, transaction, visible: false });
+    }
+    if (job.vendor_id) {
+      await notifyVendor(job.vendor_id, { type: "job_cancelled", title: `Job ${job.job_number} withdrawn`, body: `The platform team reassigned this job. ${reason}`, link: `/vendor/assigned-orders/${job.id}` }, transaction);
+    }
+    return job;
+  });
+}
+
 async function loadJob(auth, jobId, { transaction, forUpdate = false } = {}) {
   const job = await ProductionJob.findByPk(jobId, { transaction, lock: forUpdate ? transaction.LOCK.UPDATE : undefined });
   if (!job) throw ApiError.notFound("Job not found");
@@ -464,4 +532,4 @@ async function escalateAtRisk() {
   }
 }
 
-module.exports = { sourceOptions, assign, respond, updateMilestone, recordQc, list, detail, board, escalateAtRisk, REJECTION_CODES, loadJob, canUpdate, presentJob, notifyStaff, notifyVendor };
+module.exports = { sourceOptions, assign, readyToAssign, unassign, respond, updateMilestone, recordQc, list, detail, board, escalateAtRisk, REJECTION_CODES, loadJob, canUpdate, presentJob, notifyStaff, notifyVendor };

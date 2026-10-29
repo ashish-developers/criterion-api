@@ -5,7 +5,7 @@ const { ok, created } = require("../Utils/http");
 module.exports = {
   updateProfile: async (req, res) => {
     const user = await accountService.updateProfile(req.auth.user.id, req.body);
-    return ok(res, { id: user.id, name: user.name, phone: user.phone, marketing_opt_in: user.marketing_opt_in }, "Profile updated");
+    return ok(res, { id: user.id, name: user.name, phone: user.phone, designation: user.designation, marketing_opt_in: user.marketing_opt_in }, "Profile updated");
   },
   summary: async (req, res) => {
     const [notifications, cartCount] = await Promise.all([accountService.notifications(req.auth.user.id, { limit: 5 }), cartService.count(req.auth.user.id)]);

@@ -53,6 +53,25 @@ const DEFAULTS = {
     description: "Blog workflow: when approval is required, posts by users without blog.approve must be approved before they can be published or scheduled",
     value: { approval_required: true },
   },
+  visiting_cards: {
+    description: "Visiting card module: order minimums, surcharges, GST, production time, artwork review and delivery charges",
+    value: {
+      enabled: true,
+      allow_individual: true,
+      allow_corporate: true,
+      // Cards in the whole order, and cards printed per person.
+      min_order_qty: 100,
+      min_qty_per_card: 100,
+      max_qty_per_card: 20000,
+      max_employees_per_order: 500,
+      double_sided_per_card_paise: 50,
+      gst_rate: 18,
+      hsn_code: "4911",
+      production_days: 3,
+      artwork_review_required: true,
+      shipping: { base_paise: 7900, per_box_paise: 2500, box_size: 500, free_above_paise: 0, gst_rate: 18 },
+    },
+  },
 };
 
 let cache = null;

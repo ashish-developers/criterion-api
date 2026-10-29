@@ -23,6 +23,7 @@ async function main() {
   if (!args.has("--no-orders")) {
     const { seedDemoOrders } = require("./demoOrders");
     await seedDemoOrders();
+    await require("./demoVisitingCards").seedDemoVisitingCards();
   }
 }
 

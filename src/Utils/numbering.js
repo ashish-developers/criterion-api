@@ -8,6 +8,8 @@ const PREFIXES = {
   shipment: "SHP",
   ticket: "TKT",
   settlement: "STL",
+  vc_order: "VC",
+  vc_receipt: "RCT",
 };
 
 // Atomically increments a named counter and returns e.g. "ORD-000042".

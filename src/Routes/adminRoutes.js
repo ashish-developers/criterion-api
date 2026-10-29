@@ -38,8 +38,11 @@ router.get("/inventory/:id/history", can("inventory.manage"), id, c.stockHistory
 
 // Orders, proofs, production, shipping
 router.get("/orders", can("orders.view", "production.view"), validate({ query: cv.orderList }), c.orders);
+router.get("/orders/filter-options", can("orders.view"), c.orderFilterOptions);
 router.get("/orders/:id", can("orders.view", "production.view"), id, c.order);
 router.post("/orders/:id/cancel", can("orders.manage"), id, validate({ body: cv.cancel }), c.cancelOrder);
+router.post("/orders/:id/confirm", can("orders.manage"), id, validate({ body: v.orderConfirm }), c.confirmOrder);
+router.post("/orders/:id/close", can("orders.manage"), id, validate({ body: v.orderClose }), c.closeOrder);
 router.post("/orders/:id/payments", can("payments.view"), can("refunds.approve"), id, validate({ body: v.offlinePayment }), c.offlinePayment);
 router.post("/order-items/:id/transition", can("orders.manage"), id, validate({ body: v.itemTransition }), c.transitionItem);
 router.get("/order-items/:id/sources", can("production.manage"), id, c.sourceOptions);
@@ -47,6 +50,8 @@ router.post("/order-items/:id/assign", can("production.manage"), id, validate({ 
 router.get("/proofs/queue", can("proofs.manage"), c.proofQueue);
 router.post("/proofs", can("proofs.manage"), validate({ body: v.proofCreate }), c.createProof);
 router.get("/production/board", can("production.view"), c.board);
+router.get("/production/ready", can("production.manage"), c.readyToAssign);
+router.post("/production/jobs/:id/unassign", can("production.manage"), id, validate({ body: v.jobUnassign }), c.unassignJob);
 router.get("/production/jobs", can("production.view"), validate({ query: v.jobList }), c.jobs);
 router.get("/production/jobs/:id", can("production.view"), id, c.job);
 router.post("/production/jobs/:id/events", can("production.manage"), id, validate({ body: v.milestone }), c.milestone);
@@ -117,5 +122,8 @@ router.get("/audit-logs", can("audit.view"), c.audit);
 
 // Blog management (posts, workflow, categories, tags, permissions)
 router.use("/blog", require("./blogAdminRoutes"));
+
+// Visiting card module (templates, orders, pricing, payments, settings)
+router.use("/visiting-cards", require("./vcAdminRoutes"));
 
 module.exports = router;

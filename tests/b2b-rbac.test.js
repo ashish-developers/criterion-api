@@ -54,6 +54,13 @@ test("a business buyer requests a quote for 200 T-shirts with a size split, rece
   assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
   state.orderId = accepted.data.orderId;
 
+  // The accepted quotation is a sales order that staff confirm before payment is taken.
+  const pending = await anjali.get(`/orders/${state.orderId}`);
+  assert.equal(pending.data.status, "pending_confirmation");
+  assert.equal(pending.data.actions.canPay, false);
+  assert.equal((await anjali.post(`/orders/${state.orderId}/payments`)).status, 409, "no payment before confirmation");
+  assert.equal((await admin.post(`/admin/orders/${state.orderId}/confirm`, {})).status, 200);
+
   const order = await anjali.get(`/orders/${state.orderId}`);
   assert.equal(order.data.payment_terms, "advance_50");
   assert.equal(order.data.subtotal_paise, 29900 * 200, "quoted prices are kept");

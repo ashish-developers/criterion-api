@@ -5,9 +5,12 @@ const { sequelize, User, Address, Wishlist, Product, Notification } = require(".
 const ApiError = require("../Utils/ApiError");
 const catalogService = require("./catalogService");
 
-async function updateProfile(userId, { name, phone, marketingOptIn }) {
+async function updateProfile(userId, { name, phone, designation, marketingOptIn }) {
   const user = await User.findByPk(userId);
-  await user.update({ name, phone, marketing_opt_in: Boolean(marketingOptIn) });
+  const patch = { name, phone, marketing_opt_in: Boolean(marketingOptIn) };
+  // Older clients do not send the job title; leave it unchanged rather than clearing it.
+  if (designation !== undefined) patch.designation = designation;
+  await user.update(patch);
   return user;
 }
 

@@ -51,9 +51,10 @@ function cancellationPolicy(state) {
 }
 
 // Derive the order-level status from line states.
-function deriveOrderStatus(states, { approvalPending = false, paymentPending = false } = {}) {
+function deriveOrderStatus(states, { confirmationPending = false, approvalPending = false, paymentPending = false } = {}) {
   const live = states.filter((s) => !["cancelled", "refunded"].includes(s));
   if (!live.length) return states.every((s) => s === "refunded") ? "refunded" : "cancelled";
+  if (confirmationPending) return "pending_confirmation";
   if (approvalPending) return "awaiting_approval";
   if (live.every((s) => s === "closed")) return "completed";
   if (live.every((s) => ["delivered", "closed"].includes(s))) return "delivered";

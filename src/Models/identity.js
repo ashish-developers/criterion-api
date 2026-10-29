@@ -30,6 +30,7 @@ const User = define(
     name: T.str,
     email: T.str,
     phone: T.str,
+    designation: T.str,
     password_hash: T.text,
     account_type: T.str,
     status: T.str,

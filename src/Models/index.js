@@ -4,8 +4,9 @@ const catalogue = require("./catalogue");
 const commerce = require("./commerce");
 const operations = require("./operations");
 const blog = require("./blog");
+const visitingCards = require("./visitingCards");
 
-const m = { ...identity, ...catalogue, ...commerce, ...operations, ...blog };
+const m = { ...identity, ...catalogue, ...commerce, ...operations, ...blog, ...visitingCards };
 
 // ---- Identity
 m.User.hasMany(m.UserRole, { foreignKey: "user_id", as: "userRoles" });
@@ -84,9 +85,12 @@ m.QuoteRequestItem.belongsTo(m.DecorationMethod, { foreignKey: "method_id", as: 
 m.Quote.hasMany(m.QuoteVersion, { foreignKey: "quote_id", as: "versions" });
 m.Quote.belongsTo(m.QuoteVersion, { foreignKey: "current_version_id", as: "currentVersion", constraints: false });
 m.QuoteVersion.hasMany(m.QuoteItem, { foreignKey: "quote_version_id", as: "items" });
+m.QuoteVersion.belongsTo(m.User, { foreignKey: "created_by", as: "author" });
 m.QuoteItem.belongsTo(m.Product, { foreignKey: "product_id", as: "product" });
 m.Quote.hasMany(m.QuoteMessage, { foreignKey: "quote_id", as: "messages" });
 m.QuoteMessage.belongsTo(m.User, { foreignKey: "user_id", as: "user" });
+m.Quote.hasMany(m.QuoteEvent, { foreignKey: "quote_id", as: "events" });
+m.QuoteEvent.belongsTo(m.User, { foreignKey: "actor_user_id", as: "actor" });
 
 // ---- Orders
 m.Order.belongsTo(m.User, { foreignKey: "user_id", as: "customer" });
@@ -153,5 +157,19 @@ m.BlogPost.belongsTo(m.BlogCategory, { foreignKey: "category_id", as: "category"
 m.BlogPost.belongsToMany(m.BlogTag, { through: m.BlogPostTag, foreignKey: "post_id", otherKey: "tag_id", as: "tags" });
 m.BlogTag.belongsToMany(m.BlogPost, { through: m.BlogPostTag, foreignKey: "tag_id", otherKey: "post_id", as: "posts" });
 m.BlogPostHistory.belongsTo(m.User, { foreignKey: "actor_user_id", as: "actor" });
+
+// ---- Visiting cards
+m.VcTemplate.belongsTo(m.VcTemplateCategory, { foreignKey: "category_id", as: "category" });
+m.VcTemplateCategory.hasMany(m.VcTemplate, { foreignKey: "category_id", as: "templates" });
+m.VcDesign.belongsTo(m.VcTemplate, { foreignKey: "template_id", as: "template" });
+m.VcDesign.belongsTo(m.User, { foreignKey: "user_id", as: "owner" });
+m.VcOrder.belongsTo(m.User, { foreignKey: "user_id", as: "customer" });
+m.VcOrder.belongsTo(m.Company, { foreignKey: "company_id", as: "company" });
+m.VcOrder.hasMany(m.VcOrderCard, { foreignKey: "order_id", as: "cards" });
+m.VcOrder.hasMany(m.VcOrderEvent, { foreignKey: "order_id", as: "events" });
+m.VcOrder.hasMany(m.VcPayment, { foreignKey: "order_id", as: "payments" });
+m.VcOrder.hasOne(m.VcInvoice, { foreignKey: "order_id", as: "invoice" });
+m.VcOrderEvent.belongsTo(m.User, { foreignKey: "actor_user_id", as: "actor" });
+m.VcPayment.belongsTo(m.VcOrder, { foreignKey: "order_id", as: "order" });
 
 module.exports = { sequelize, ...m };

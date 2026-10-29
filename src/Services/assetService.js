@@ -78,7 +78,8 @@ function present(asset) {
   };
 }
 
-const STAFF_VIEW = ["orders.view", "production.view", "proofs.manage", "catalogue.manage", "tickets.manage", "quotes.view"];
+// vc.view: logos and photos on visiting card orders, for artwork review.
+const STAFF_VIEW = ["orders.view", "production.view", "proofs.manage", "catalogue.manage", "tickets.manage", "quotes.view", "vc.view"];
 
 // Vendors only see files belonging to jobs assigned to them (Section 11.2).
 async function vendorCanSee(vendorId, assetId) {

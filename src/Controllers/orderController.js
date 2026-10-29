@@ -22,6 +22,7 @@ module.exports = {
     const result = await orderService.checkout(req.auth, req.body);
     return result.duplicate ? ok(res, result.order, "Order already placed") : created(res, result.order, "Order placed");
   },
+  filterOptions: async (req, res) => ok(res, await orderService.filterOptions(req.auth, { scope: req.validatedQuery.scope })),
   list: async (req, res) => {
     const query = req.validatedQuery;
     const page = query.page || 1;

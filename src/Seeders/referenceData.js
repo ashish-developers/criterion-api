@@ -175,6 +175,7 @@ async function seedReference() {
     }
 
     await seedTaxMaster(transaction);
+    await require("./vcReference").seedVisitingCards(transaction);
   });
   accessService.invalidateRoleCache();
   settingsService.clearCache();

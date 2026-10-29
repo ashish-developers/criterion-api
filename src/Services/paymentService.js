@@ -13,6 +13,7 @@ async function createIntent(auth, orderId) {
     const order = await Order.findByPk(orderId, { transaction, lock: transaction.LOCK.UPDATE });
     if (!order || order.user_id !== auth.user.id) throw ApiError.notFound("Order not found");
     if (["cancelled", "refunded"].includes(order.status)) throw ApiError.conflict("This order has been cancelled", "ORDER_CANCELLED");
+    if (order.confirmation_status === "pending") throw ApiError.conflict("This order is waiting for our confirmation. You can pay once it is confirmed.", "CONFIRMATION_PENDING");
     if (order.approval_status === "pending") throw ApiError.conflict("This order is waiting for your company's approval", "APPROVAL_PENDING");
     const due = await orderService.amountDue(order);
     if (due.amountPaise <= 0) throw ApiError.conflict("Nothing is due on this order", "NOTHING_DUE");
@@ -163,10 +164,14 @@ async function handleRazorpayWebhook(req) {
     const payment = await Payment.findOne({ where: { provider: "razorpay", provider_order_id: entity.order_id } });
     if (payment) {
       await capture(payment.id, { providerPaymentId: entity.id, method: entity.method, raw: entity, signatureVerified: true });
+    } else {
+      // Not a shop order: visiting card orders use the same gateway account and webhook.
+      await require("./vcPaymentService").handleGatewayEvent(req.body.event, entity);
     }
   } else if (entity && req.body.event === "payment.failed") {
     const payment = await Payment.findOne({ where: { provider: "razorpay", provider_order_id: entity.order_id, status: "created" } });
     if (payment) await fail(payment.id, entity.error_description || "Payment failed");
+    else await require("./vcPaymentService").handleGatewayEvent(req.body.event, entity);
   }
   await record.update({ processed_at: new Date() });
   return { processed: true };
@@ -176,6 +181,7 @@ async function handleRazorpayWebhook(req) {
 async function recordOffline(auth, orderId, { amountPaise, reference, note }) {
   const order = await Order.findByPk(orderId);
   if (!order) throw ApiError.notFound("Order not found");
+  if (order.confirmation_status === "pending") throw ApiError.conflict("Confirm the sales order before recording a payment", "CONFIRMATION_PENDING");
   const outstanding = order.total_paise - order.amount_paid_paise;
   if (amountPaise > outstanding) throw ApiError.unprocessable(`Only ₹${(outstanding / 100).toFixed(2)} is outstanding`, "AMOUNT_TOO_HIGH");
   const payment = await Payment.create({

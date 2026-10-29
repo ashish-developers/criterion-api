@@ -16,10 +16,17 @@ router.post("/:id/request-revision", requirePermission("quotes.request"), valida
 router.post("/:id/reject", requirePermission("quotes.request"), validate({ params: v.idParam, body: v.quoteReject }), c.reject);
 router.post("/:id/messages", validate({ params: v.idParam, body: v.message }), c.message);
 router.post("/:id/repeat", requirePermission("quotes.request"), validate({ params: v.idParam }), c.repeat);
+// The customer corrects a request staff returned to them, and resubmits it.
+router.post("/:id/resubmit", requirePermission("quotes.request"), validate({ params: v.idParam, body: v.quoteResubmit }), c.resubmit);
+// History and the printable quotation (any version) for whoever can see the quotation.
+router.get("/:id/history", validate({ params: v.idParam }), c.history);
+router.get("/:id/document", validate({ params: v.idParam, query: v.quoteDocument }), c.document);
 
 // Staff pricing
 router.get("/:id/suggestion", requirePermission("quotes.manage"), validate({ params: v.idParam }), c.suggest);
 router.post("/:id/review", requirePermission("quotes.manage"), validate({ params: v.idParam }), c.review);
 router.post("/:id/versions", requirePermission("quotes.manage"), validate({ params: v.idParam, body: v.quoteVersion }), c.sendVersion);
+router.post("/:id/return", requirePermission("quotes.manage"), validate({ params: v.idParam, body: v.quoteReturn }), c.returnToCustomer);
+router.post("/:id/decline", requirePermission("quotes.manage"), validate({ params: v.idParam, body: v.quoteDecline }), c.decline);
 
 module.exports = router;

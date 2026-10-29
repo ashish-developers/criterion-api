@@ -38,7 +38,7 @@ async function userPermissions(userId) {
 
 async function loadContext(userId) {
   const [rows] = await sequelize.query(
-    `SELECT u.id, u.name, u.email, u.phone, u.account_type, u.status, u.avatar_url, u.email_verified_at, u.must_change_password,
+    `SELECT u.id, u.name, u.email, u.phone, u.designation, u.account_type, u.status, u.avatar_url, u.email_verified_at, u.must_change_password,
             r.code AS role_code, ur.scope_type, ur.scope_id
        FROM users u
        LEFT JOIN user_roles ur ON ur.user_id = u.id
@@ -53,6 +53,7 @@ async function loadContext(userId) {
     name: first.name,
     email: first.email,
     phone: first.phone,
+    designation: first.designation,
     account_type: first.account_type,
     status: first.status,
     avatar_url: first.avatar_url,

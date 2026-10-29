@@ -18,6 +18,7 @@ router.post("/checkout", ...buyer, rateLimit({ name: "checkout", windowMs: 60 * 
 
 // Order visibility is enforced per record (owner, company members, staff).
 router.get("/orders", requireAuth, validate({ query: v.orderList }), c.list);
+router.get("/orders/filter-options", requireAuth, validate({ query: v.orderFilterOptions }), c.filterOptions);
 router.get("/orders/:id", requireAuth, validate({ params: v.idParam }), c.detail);
 router.get("/orders/:id/timeline", requireAuth, validate({ params: v.idParam }), c.timeline);
 router.get("/orders/:id/proofs", requireAuth, validate({ params: v.idParam }), c.proofs);

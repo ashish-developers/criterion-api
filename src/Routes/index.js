@@ -11,6 +11,7 @@ router.use("/business", require("./businessRoutes"));
 router.use("/vendor", require("./vendorRoutes"));
 router.use("/", require("./supportRoutes")); //  /tickets, /content
 router.use("/blog", require("./blogRoutes")); //  public blog (published posts only)
+router.use("/visiting-cards", require("./vcRoutes")); // card designer and bulk card orders
 router.use("/admin", require("./adminRoutes"));
 router.use("/webhooks", require("./webhookRoutes"));
 

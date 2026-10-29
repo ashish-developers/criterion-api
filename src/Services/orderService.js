@@ -36,6 +36,7 @@ const totalsService = require("./totalsService");
 const settingsService = require("./settingsService");
 const notificationService = require("./notificationService");
 const shippingEstimator = require("./shippingEstimator");
+const orderFilters = require("./orderFilters");
 
 // ------------------------------------------------------------------ helpers
 function addressSnapshot(a) {
@@ -62,6 +63,7 @@ async function refreshOrderStatus(orderId, transaction) {
   const order = await Order.findByPk(orderId, { transaction, lock: transaction.LOCK.UPDATE });
   const items = await OrderItem.findAll({ where: { order_id: orderId }, transaction });
   const status = machine.deriveOrderStatus(items.map((i) => i.state), {
+    confirmationPending: order.confirmation_status === "pending",
     approvalPending: order.approval_status === "pending",
     paymentPending: !paymentConditionMet(order),
   });
@@ -112,7 +114,7 @@ function paymentConditionMet(order) {
 async function advanceAfterPayment(orderId, { actorId, transaction }) {
   const proofService = require("./proofService");
   const order = await Order.findByPk(orderId, { transaction });
-  if (order.approval_status === "pending" || !paymentConditionMet(order)) return;
+  if (order.confirmation_status === "pending" || order.approval_status === "pending" || !paymentConditionMet(order)) return;
   const items = await OrderItem.findAll({ where: { order_id: orderId, state: { [Op.in]: ["placed", "payment_pending"] } }, transaction });
   for (const item of items) {
     if (item.requires_proof) {
@@ -435,9 +437,13 @@ async function detail(auth, orderId) {
     })),
     invoice: pricing && invoice ? { id: invoice.id, number: invoice.invoice_number, issuedAt: invoice.issued_at, dueDate: invoice.due_date } : null,
     tickets,
-    amountDue: pricing ? due : null,
+    amountDue: pricing && order.confirmation_status !== "pending" ? due : null,
+    flow: await require("./salesFlowService").forOrder(order),
     actions: {
-      canPay: pricing && order.approval_status !== "pending" && due.amountPaise > 0 && !["cancelled", "refunded"].includes(order.status) && order.user_id === auth.user.id,
+      canConfirm: order.confirmation_status === "pending" && order.status !== "cancelled" && auth.permissions.has("orders.manage"),
+      canClose: auth.permissions.has("orders.manage") && closeBlocker(order, items) === null,
+      closeBlocker: staff ? closeBlocker(order, items) : undefined,
+      canPay: pricing && order.confirmation_status !== "pending" && order.approval_status !== "pending" && due.amountPaise > 0 && !["cancelled", "refunded"].includes(order.status) && order.user_id === auth.user.id,
       canApprove: order.approval_status === "pending" && order.company_id === auth.companyId && auth.permissions.has("company.orders.approve"),
       canCancel: order.user_id === auth.user.id && items.some((i) => policy[i.id].allowed),
       canReorder: order.user_id === auth.user.id,
@@ -445,7 +451,25 @@ async function detail(auth, orderId) {
   };
 }
 
-async function list(auth, { scope = "mine", page = 1, limit = 20, status, q } = {}) {
+function scopeWhere(auth, scope) {
+  if (scope === "company") {
+    if (!auth.companyId || !auth.permissions.has("company.view")) throw ApiError.forbidden();
+    return { where: { company_id: auth.companyId }, sql: "o.company_id = :scopeId", id: auth.companyId };
+  }
+  if (scope === "all") {
+    if (!auth.permissions.has("orders.view")) throw ApiError.forbidden();
+    return { where: {}, sql: "TRUE", id: null };
+  }
+  return { where: { user_id: auth.user.id }, sql: "o.user_id = :scopeId", id: auth.user.id };
+}
+
+/** Filter modules and statuses (with order counts) for the orders this viewer can list. */
+async function filterOptions(auth, { scope = "mine" } = {}) {
+  const s = scopeWhere(auth, scope);
+  return orderFilters.options(sequelize, { whereSql: s.sql, replacements: s.id ? { scopeId: s.id } : {} });
+}
+
+async function list(auth, { scope = "mine", page = 1, limit = 20, status, module, q } = {}) {
   const where = {};
   if (scope === "company") {
     if (!auth.companyId || !auth.permissions.has("company.view")) throw ApiError.forbidden();
@@ -455,7 +479,7 @@ async function list(auth, { scope = "mine", page = 1, limit = 20, status, q } = 
   } else {
     where.user_id = auth.user.id;
   }
-  if (status) where.status = status;
+  Object.assign(where, orderFilters.whereFor({ module, status }));
   if (q) where.order_number = { [Op.iLike]: `%${q}%` };
   const { rows, count } = await Order.findAndCountAll({
     where,
@@ -474,6 +498,9 @@ async function list(auth, { scope = "mine", page = 1, limit = 20, status, q } = 
       )
     : [[]];
   const byId = new Map(counts.map((c) => [c.order_id, c]));
+  const quoteIds = rows.map((o) => o.quote_id).filter(Boolean);
+  const [quotes] = quoteIds.length ? await sequelize.query(`SELECT id, quote_number FROM quotes WHERE id IN (:ids)`, { replacements: { ids: quoteIds } }) : [[]];
+  const quoteNo = new Map(quotes.map((x) => [x.id, x.quote_number]));
   return {
     items: rows.map((o) => ({
       id: o.id,
@@ -487,6 +514,9 @@ async function list(auth, { scope = "mine", page = 1, limit = 20, status, q } = 
       placedAt: o.placed_at,
       poNumber: o.po_number,
       paymentTerms: o.payment_terms,
+      confirmationStatus: o.confirmation_status,
+      quoteId: o.quote_id,
+      quoteNumber: quoteNo.get(o.quote_id) || null,
       customer: scope === "mine" ? undefined : o.customer,
       company: o.company,
       lines: byId.get(o.id)?.lines || 0,
@@ -542,7 +572,11 @@ async function cancel(auth, orderId, { reason, itemIds }) {
     });
 
     const allCancelled = (await OrderItem.count({ where: { order_id: order.id, state: { [Op.notIn]: ["cancelled", "refunded"] } }, transaction })) === 0;
-    if (allCancelled) await order.update({ cancelled_at: new Date(), cancel_reason: reason }, { transaction });
+    if (allCancelled) {
+      const patch = { cancelled_at: new Date(), cancel_reason: reason };
+      if (["pending", "confirmed"].includes(order.confirmation_status)) patch.confirmation_status = "cancelled";
+      await order.update(patch, { transaction });
+    }
 
     // Refund what was paid for the cancelled lines, less retained charges.
     // Whole order cancelled: everything paid (including shipping and its GST) less charges.
@@ -649,6 +683,78 @@ async function closeDeliveredLines() {
   return closed;
 }
 
+// ------------------------------------------------------------------ sales order flow
+/**
+ * Staff confirm a sales order created from an accepted quotation (flow step 3). Confirmation
+ * opens payment: the customer is asked for the advance / full amount, and credit accounts
+ * move straight on to artwork.
+ */
+async function confirm(auth, orderId, { note, estimatedDelivery } = {}) {
+  return sequelize.transaction(async (transaction) => {
+    const order = await Order.findByPk(orderId, { transaction, lock: transaction.LOCK.UPDATE });
+    if (!order) throw ApiError.notFound("Order not found");
+    if (order.confirmation_status !== "pending") throw ApiError.conflict("This order is not waiting for confirmation", "NOT_PENDING_CONFIRMATION");
+    if (["cancelled", "refunded"].includes(order.status)) throw ApiError.conflict("This order has been cancelled", "ORDER_CANCELLED");
+    await order.update(
+      { confirmation_status: "confirmed", confirmed_by: auth.user.id, confirmed_at: new Date(), confirmation_note: note || null, ...(estimatedDelivery ? { estimated_delivery: estimatedDelivery } : {}) },
+      { transaction }
+    );
+    const items = await OrderItem.findAll({ where: { order_id: order.id, state: "placed" }, transaction });
+    for (const item of items) await transitionItem(item, "payment_pending", { actorId: auth.user.id, transaction, skipOrderRefresh: true, note: "Sales order confirmed" });
+    await event(order.id, null, "order_confirmed", { actorId: auth.user.id, note: note || "Sales order confirmed", transaction });
+    await advanceAfterPayment(order.id, { actorId: auth.user.id, transaction });
+    await refreshOrderStatus(order.id, transaction);
+    await order.reload({ transaction });
+    const due = await amountDue(order);
+    const ask = due.amountPaise > 0 && !due.optional ? ` Please pay ₹${(due.amountPaise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })} ${due.purpose === "advance" ? "advance " : ""}to start production.` : "";
+    await notificationService.notify(
+      order.user_id,
+      { type: "order_confirmed", title: `Order ${order.order_number} confirmed`, body: `Your sales order ${order.order_number} is confirmed.${ask}`, link: `/orders/${order.id}${ask ? "?pay=1" : ""}` },
+      { transaction }
+    );
+    return order;
+  });
+}
+
+// Why an order cannot be closed yet (null when it can).
+function closeBlocker(order, items) {
+  if (["cancelled", "refunded", "completed"].includes(order.status)) return order.status === "completed" ? "Already closed" : "Order is cancelled";
+  const live = items.filter((i) => !["cancelled", "refunded"].includes(i.state));
+  if (!live.length || live.some((i) => i.state !== "delivered" && i.state !== "closed")) return "Every item must be delivered first";
+  const credit = ["credit_15", "credit_30"].includes(order.payment_terms);
+  if (!credit && order.amount_paid_paise < order.total_paise) return "Payment must be received in full first";
+  return null;
+}
+
+/**
+ * Flow step 7: after delivery, staff close the order. The final GST invoice is issued (if it
+ * was not already on full payment) and delivered lines close without waiting for the
+ * complaint window.
+ */
+async function close(auth, orderId, { note } = {}) {
+  return sequelize.transaction(async (transaction) => {
+    const order = await Order.findByPk(orderId, { transaction, lock: transaction.LOCK.UPDATE });
+    if (!order) throw ApiError.notFound("Order not found");
+    const items = await OrderItem.findAll({ where: { order_id: order.id }, transaction, lock: transaction.LOCK.UPDATE });
+    const blocker = closeBlocker(order, items);
+    if (blocker) throw ApiError.conflict(blocker, "ORDER_NOT_CLOSABLE");
+    const invoice = await require("./invoiceService").generate(order.id, { transaction });
+    for (const item of items.filter((i) => i.state === "delivered")) {
+      await transitionItem(item, "closed", { actorId: auth.user.id, note: note || "Order closed", transaction, skipOrderRefresh: true });
+      await Commission.update({ eligible_at: new Date() }, { where: { order_item_id: item.id, eligible_at: null }, transaction });
+    }
+    await order.update({ closed_by: auth.user.id }, { transaction });
+    await event(order.id, null, "order_closed", { actorId: auth.user.id, note: note || `Order closed. Invoice ${invoice.invoice_number}.`, transaction });
+    await refreshOrderStatus(order.id, transaction);
+    await notificationService.notify(
+      order.user_id,
+      { type: "order_completed", title: `Order ${order.order_number} completed`, body: `Thank you! Your order is complete and invoice ${invoice.invoice_number} is ready.`, link: `/orders/${order.id}/invoice` },
+      { transaction }
+    );
+    return order.reload({ transaction });
+  });
+}
+
 // Admin: change a line state manually (on hold / resume etc.) with audit.
 async function adminTransition(auth, itemId, { to, note }) {
   return sequelize.transaction(async (transaction) => {
@@ -673,6 +779,10 @@ module.exports = {
   reorder,
   closeDeliveredLines,
   adminTransition,
+  confirm,
+  close,
+  closeBlocker,
+  filterOptions,
   transitionItem,
   refreshOrderStatus,
   advanceAfterPayment,

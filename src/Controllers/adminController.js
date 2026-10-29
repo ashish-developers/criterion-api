@@ -91,6 +91,7 @@ module.exports = {
     const result = await orderService.list(req.auth, { ...req.validatedQuery, scope: "all", ...paging(req) });
     return listed(res, req, result);
   },
+  orderFilterOptions: async (req, res) => ok(res, await orderService.filterOptions(req.auth, { scope: "all" })),
   order: async (req, res) => ok(res, await orderService.detail(req.auth, req.params.id)),
   transitionItem: async (req, res) => {
     const item = await orderService.adminTransition(req.auth, req.params.id, req.body);
@@ -101,6 +102,16 @@ module.exports = {
     const result = await orderService.cancel(req.auth, req.params.id, req.body);
     await audit.record(req, "order.cancelled", "order", req.params.id, { after: { ...req.body, ...result } });
     return ok(res, result, "Order cancelled");
+  },
+  confirmOrder: async (req, res) => {
+    const order = await orderService.confirm(req.auth, req.params.id, req.body);
+    await audit.record(req, "order.confirmed", "order", req.params.id, { after: req.body });
+    return ok(res, { id: order.id, status: order.status, confirmationStatus: order.confirmation_status }, "Sales order confirmed");
+  },
+  closeOrder: async (req, res) => {
+    const order = await orderService.close(req.auth, req.params.id, req.body);
+    await audit.record(req, "order.closed", "order", req.params.id, { after: req.body });
+    return ok(res, { id: order.id, status: order.status }, "Order closed");
   },
   proofQueue: async (req, res) => ok(res, await proofService.queue()),
   createProof: async (req, res) => {
@@ -117,6 +128,12 @@ module.exports = {
   jobs: async (req, res) => listed(res, req, await productionService.list(req.auth, { ...req.validatedQuery, ...paging(req, 50) }), 50),
   job: async (req, res) => ok(res, await productionService.detail(req.auth, req.params.id)),
   board: async (req, res) => ok(res, await productionService.board()),
+  readyToAssign: async (req, res) => listed(res, req, await productionService.readyToAssign(paging(req, 50)), 50),
+  unassignJob: async (req, res) => {
+    const job = await productionService.unassign(req.auth, req.params.id, req.body);
+    await audit.record(req, "production_job.unassigned", "production_job", req.params.id, { after: req.body });
+    return ok(res, job, "Job taken back; the line is ready to assign again");
+  },
   milestone: async (req, res) => ok(res, await productionService.updateMilestone(req.auth, req.params.id, req.body), "Status updated"),
   qc: async (req, res) => created(res, await productionService.recordQc(req.auth, req.params.id, req.body), "Quality check recorded"),
   ship: async (req, res) => {

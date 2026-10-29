@@ -105,6 +105,9 @@ const assign = z.object({
 }).refine((d) => d.source === "in_house" || d.vendorId, { path: ["vendorId"], message: "Choose a vendor" });
 const proofCreate = z.object({ orderItemId: uuid, previewAssetId: uuid, printFileAssetId: uuid.optional().nullable(), notes: optionalText(1000) });
 const itemTransition = z.object({ to: z.enum(["resume", "on_hold", "placed", "payment_pending", "artwork_pending", "proof_sent", "proof_approved", "assigned", "in_production", "quality_check", "packed", "dispatched", "delivered", "closed", "cancelled", "refunded", "rto"]), note: z.string().trim().min(3).max(500) });
+const jobUnassign = z.object({ reason: z.string().trim().min(3, "Tell the producer why").max(500) });
+const orderConfirm = z.object({ note: optionalText(500), estimatedDelivery: date.optional().nullable() });
+const orderClose = z.object({ note: optionalText(500) });
 const offlinePayment = z.object({ amountPaise: paise.refine((v) => v > 0, "Enter an amount"), reference: z.string().trim().min(3).max(80), note: optionalText(300) });
 const refundRequest = z.object({ orderId: uuid, orderItemId: uuid.optional().nullable(), amountPaise: paise.refine((v) => v > 0, "Enter an amount"), reason: z.string().trim().min(3).max(500), ticketId: uuid.optional().nullable() });
 const refundDecision = z.object({ approve: z.boolean(), note: optionalText(500) });
@@ -282,6 +285,9 @@ module.exports = {
   assign,
   proofCreate,
   itemTransition,
+  orderConfirm,
+  jobUnassign,
+  orderClose,
   offlinePayment,
   refundRequest,
   refundDecision,

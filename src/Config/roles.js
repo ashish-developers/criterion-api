@@ -71,7 +71,18 @@ const PERMISSIONS = {
   "blog.feature": ["blog", "Mark blog posts as featured"],
   "blog.analytics.view": ["blog", "View blog statistics and engagement"],
   "blog.permissions.manage": ["blog", "Assign blog permissions to platform users"],
+
+  // Visiting card module (template gallery, designer, bulk card orders).
+  "vc.view": ["visiting_cards", "View the visiting card dashboard, orders and customers"],
+  "vc.orders.manage": ["visiting_cards", "Review artwork and update visiting card orders, status and tracking"],
+  "vc.templates.manage": ["visiting_cards", "Manage visiting card templates and categories"],
+  "vc.pricing.manage": ["visiting_cards", "Manage visiting card pricing, print specifications, shipping and module settings"],
+  "vc.payments.view": ["visiting_cards", "View visiting card payments, invoices and receipts"],
+  "vc.payments.manage": ["visiting_cards", "Record offline payments and refund visiting card orders"],
+  "vc.reports.view": ["visiting_cards", "View visiting card reports and analytics"],
 };
+
+const VC_PERMISSIONS = Object.keys(PERMISSIONS).filter((p) => p.startsWith("vc."));
 
 const BLOG_PERMISSIONS = Object.keys(PERMISSIONS).filter((p) => p.startsWith("blog."));
 // What the Platform Admin may grant to individual platform users. Approving posts and
@@ -148,14 +159,14 @@ const ROLES = {
     name: "Production staff",
     scope: "platform",
     portal: "admin",
-    // No pricing or payment data (Section 4.3).
-    permissions: ["admin.dashboard.view", "production.view", "production.manage", "qc.perform", "shipping.manage", "inventory.manage", "proofs.manage"],
+    // No pricing or payment data (Section 4.3): visiting card amounts are hidden without vc.payments.view.
+    permissions: ["admin.dashboard.view", "production.view", "production.manage", "qc.perform", "shipping.manage", "inventory.manage", "proofs.manage", "vc.view", "vc.orders.manage"],
   },
   support_agent: {
     name: "Support agent",
     scope: "platform",
     portal: "admin",
-    permissions: ["admin.dashboard.view", "orders.view", "quotes.view", "customers.view", "tickets.manage", "refunds.request", "production.view", "vendors.view"],
+    permissions: ["admin.dashboard.view", "orders.view", "quotes.view", "customers.view", "tickets.manage", "refunds.request", "production.view", "vendors.view", "vc.view"],
   },
   platform_admin: { name: "Platform admin / finance", scope: "platform", portal: "admin", permissions: ADMIN_PERMS },
 };
@@ -163,4 +174,4 @@ const ROLES = {
 // Refunds above this amount raised by support need finance (refunds.approve) sign-off.
 const SUPPORT_REFUND_LIMIT_PAISE = 200000;
 
-module.exports = { PERMISSIONS, ROLES, SUPPORT_REFUND_LIMIT_PAISE, BLOG_PERMISSIONS, BLOG_GRANTABLE, BLOG_PRESETS };
+module.exports = { PERMISSIONS, ROLES, SUPPORT_REFUND_LIMIT_PAISE, BLOG_PERMISSIONS, BLOG_GRANTABLE, BLOG_PRESETS, VC_PERMISSIONS };
