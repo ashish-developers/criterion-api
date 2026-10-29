@@ -32,7 +32,7 @@ if (!apiPrefix.startsWith("/")) apiPrefix = `/api/${apiPrefix}`;
 const config = {
   appName: str("APP_NAME", "branding"),
   // Customer-facing name used in emails (matches NEXT_PUBLIC_BRAND_NAME in the web app).
-  brandName: str("BRAND_NAME", "GiftCraft"),
+  brandName: str("BRAND_NAME", "MingoKart"),
   appEnv,
   isProduction,
   isTest: appEnv === "test",
