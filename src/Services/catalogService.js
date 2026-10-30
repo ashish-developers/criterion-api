@@ -17,7 +17,8 @@ const pricingService = require("./pricingService");
 const shippingEstimator = require("./shippingEstimator");
 
 const PRODUCT_INCLUDES = [
-  { model: Category, as: "category", attributes: ["id", "name", "slug", "parent_id"] },
+  // The parent too, so storefront links can use the category hierarchy (/products/<parent>/<child>).
+  { model: Category, as: "category", attributes: ["id", "name", "slug", "parent_id"], include: [{ model: Category, as: "parent", attributes: ["name", "slug"] }] },
   { model: ProductVariant, as: "variants" },
   { model: ProductMethod, as: "methods", include: [{ model: DecorationMethod, as: "method" }] },
   { model: PriceTier, as: "priceTiers" },
@@ -57,7 +58,7 @@ function summarise(p) {
     slug: p.slug,
     shortDescription: p.short_description,
     image: (p.images || [])[0] || null,
-    category: p.category ? { name: p.category.name, slug: p.category.slug } : null,
+    category: p.category ? { name: p.category.name, slug: p.category.slug, parent: p.category.parent ? { name: p.category.parent.name, slug: p.category.parent.slug } : null } : null,
     sourceType: p.source_type,
     moq: p.moq,
     leadTimeDays: p.lead_time_days,
