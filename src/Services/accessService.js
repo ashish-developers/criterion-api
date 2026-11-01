@@ -74,6 +74,12 @@ async function loadContext(userId) {
   const companyRole = roles.find((r) => r.scopeType === "company");
   const vendorRole = roles.find((r) => r.scopeType === "vendor");
   const portals = [...new Set(roles.map((r) => ROLES[r.code]?.portal).filter(Boolean))];
+  // A company suspended by the platform blocks every member (checked in Middleware/auth.js).
+  let companySuspended = false;
+  if (companyRole) {
+    const [[company]] = await sequelize.query(`SELECT status FROM companies WHERE id = :id`, { replacements: { id: companyRole.scopeId } });
+    companySuspended = company?.status === "suspended";
+  }
 
   return {
     user,
@@ -81,6 +87,7 @@ async function loadContext(userId) {
     permissions,
     companyId: companyRole?.scopeId || null,
     companyRole: companyRole?.code || null,
+    companySuspended,
     vendorId: vendorRole?.scopeId || null,
     vendorRole: vendorRole?.code || null,
     isStaff: roles.some((r) => r.scopeType === "platform"),

@@ -36,7 +36,7 @@ async function sendOtpEmail(user, purpose, otp) {
   const copy = PURPOSE_COPY[purpose];
   return mailService.send({
     to: user.email,
-    subject: `${copy.subject} - ${config.appName}`,
+    subject: `${copy.subject} - ${config.brandName}`,
     text: `Your verification code is ${otp}. It expires in ${config.otp.ttlMinutes} minutes. Use it to ${copy.action}. If you did not request this, ignore this email.`,
     html: `<p>Your verification code is <strong style="font-size:20px">${otp}</strong>.</p><p>It expires in ${config.otp.ttlMinutes} minutes. Use it to ${copy.action}.</p><p>If you did not request this, ignore this email.</p>`,
   });
@@ -147,9 +147,29 @@ async function activateUser(user, transaction) {
       const role = { admin: "business_admin", approver: "business_approver", buyer: "business_buyer" }[membership.member_role];
       await assignRole(user.id, role, "company", membership.company_id, transaction);
       if (membership.status === "invited") await membership.update({ status: "active" }, { transaction });
+      // A self-registered company is now live: tell the team that reviews business accounts.
+      if (membership.member_role === "admin") {
+        const company = await Company.findByPk(membership.company_id, { transaction });
+        transaction.afterCommit(() =>
+          require("./productionService")
+            .notifyStaff("customers.manage", { type: "company_registered", title: `New business account: ${company.name}`, body: `${user.name} (${user.email})${company.gstin ? `, GSTIN ${company.gstin}` : ", no GSTIN"}. Review payment terms and limits.`, link: `/admin/businesses/${company.id}` })
+            .catch(() => {})
+        );
+      }
     }
   }
   // Vendors receive vendor_admin when they submit their vendor application.
+}
+
+// Members of a company the platform suspended cannot sign in (their sessions are revoked
+// when the company is suspended; Middleware/auth.js refuses any token still in use).
+async function assertCompanyActive(userId) {
+  const [rows] = await sequelize.query(
+    `SELECT 1 FROM user_roles ur JOIN companies c ON c.id = ur.scope_id
+      WHERE ur.user_id = :userId AND ur.scope_type = 'company' AND c.status = 'suspended' LIMIT 1`,
+    { replacements: { userId } }
+  );
+  if (rows.length) throw ApiError.forbidden("Your company account has been suspended. Contact support.", "COMPANY_SUSPENDED");
 }
 
 // ----------------------------------------------------------------------- login
@@ -160,6 +180,7 @@ async function login({ email, password }, req) {
   const valid = await verifyPassword(password, user ? user.password_hash : DUMMY_HASH);
   if (!user || !valid) throw ApiError.unauthorized("Incorrect email or password", "INVALID_CREDENTIALS");
   if (user.status === "suspended") throw ApiError.forbidden("This account has been suspended. Contact support.", "ACCOUNT_SUSPENDED");
+  await assertCompanyActive(user.id);
   // An unverified account finishes registration verification instead.
   const purpose = user.status === "pending" ? "register" : "login";
   return sequelize.transaction((transaction) => createChallenge(user, purpose, req, transaction));
@@ -212,6 +233,7 @@ async function verifyOtp({ challengeId, otp }, req) {
   const user = await User.findByPk(challenge.user_id);
   if (!user) throw ApiError.badRequest("Account not found", undefined, "CHALLENGE_INVALID");
   if (user.status === "suspended") throw ApiError.forbidden("This account has been suspended.", "ACCOUNT_SUSPENDED");
+  await assertCompanyActive(user.id);
 
   await sequelize.transaction(async (transaction) => {
     if (challenge.purpose === "register" && user.status === "pending") await activateUser(user, transaction);
@@ -360,7 +382,7 @@ async function refresh(refreshToken, req) {
     throw ApiError.unauthorized("Session expired. Please sign in again.", "REFRESH_INVALID");
   }
   const context = await accessService.loadContext(session.user_id);
-  if (!context || context.user.status !== "active") {
+  if (!context || context.user.status !== "active" || context.companySuspended) {
     await session.update({ revoked_at: new Date() });
     throw ApiError.unauthorized("Account is not active", "ACCOUNT_INACTIVE");
   }

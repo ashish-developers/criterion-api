@@ -167,6 +167,33 @@ async function listings(auth) {
   return products;
 }
 
+// True when an edit to a live listing changes nothing but stock levels: such edits stay live
+// instead of going back for approval. Content, price, tax, variants and methods still do.
+async function onlyStockChanged(product, fields, data, transaction) {
+  const isNum = (v) => typeof v === "number" || (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v)));
+  const same = (a, b) => (isNum(a) && isNum(b) ? Number(a) === Number(b) : JSON.stringify(a ?? null) === JSON.stringify(b ?? null));
+  // Fields the save sets itself (not from the vendor's form) don't count as an edit.
+  const fixed = ["status", "packaging_cost_paise", "supports_live_preview"];
+  for (const [key, value] of Object.entries(fields)) {
+    if (fixed.includes(key) || value === undefined) continue;
+    if (!same(product[key], value)) return false;
+  }
+  const variants = (await ProductVariant.findAll({ where: { product_id: product.id }, transaction })).filter((v) => v.is_active);
+  if (variants.length !== data.variants.length) return false;
+  for (const v of data.variants) {
+    const found = variants.find((e) => e.sku === v.sku.toUpperCase());
+    if (!found) return false;
+    if (!same(found.attributes, v.attributes) || !same(found.color_hex, v.colorHex || null) || !same(found.image, v.image || null) || found.track_inventory !== (v.trackInventory !== false)) return false;
+  }
+  const current = await ProductMethod.findAll({ where: { product_id: product.id }, include: [{ model: DecorationMethod, as: "method", attributes: ["code"] }], transaction });
+  const wanted = data.methods || [];
+  if (current.length !== wanted.length) return false;
+  return wanted.every((m) => {
+    const pm = current.find((c) => c.method?.code === m.code);
+    return pm && same(pm.cost_per_unit_paise, m.costPerUnitPaise) && same(pm.setup_fee_paise, m.setupFeePaise || 0) && same(pm.moq, m.moq || 1);
+  });
+}
+
 async function saveListing(auth, data, id) {
   return sequelize.transaction(async (transaction) => {
     let product;
@@ -195,9 +222,11 @@ async function saveListing(auth, data, id) {
       supports_live_preview: false,
       tags: data.tags || [],
       occasions: data.occasions || [],
-      // Every create or edit goes back to the admin for approval.
+      // Every create or edit goes back to the admin for approval, except stock-only edits of a live listing.
       status: "pending_approval",
     };
+    const stockOnly = product?.status === "active" && (await onlyStockChanged(product, fields, data, transaction));
+    if (stockOnly) fields.status = "active";
     if (product) await product.update(fields, { transaction });
     else {
       const base = data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 180);
@@ -240,9 +269,11 @@ async function saveListing(auth, data, id) {
       if (!method) continue;
       await ProductMethod.create({ product_id: product.id, method_id: method.id, cost_per_unit_paise: m.costPerUnitPaise, setup_fee_paise: m.setupFeePaise || 0, moq: m.moq || 1, is_default: i === 0 }, { transaction });
     }
-    transaction.afterCommit(() =>
-      require("./productionService").notifyStaff("catalogue.manage", { type: "listing_review", title: `Listing awaiting approval: ${product.name}`, body: "A vendor listing was created or changed.", link: `/admin/products/${product.id}` }).catch(() => {})
-    );
+    if (!stockOnly) {
+      transaction.afterCommit(() =>
+        require("./productionService").notifyStaff("catalogue.manage", { type: "listing_review", title: `Listing awaiting approval: ${product.name}`, body: "A vendor listing was created or changed.", link: `/admin/products/${product.id}` }).catch(() => {})
+      );
+    }
     return product;
   });
 }
@@ -251,7 +282,7 @@ async function setListingActive(auth, id, active) {
   const product = await Product.findOne({ where: { id, vendor_id: auth.vendorId } });
   if (!product) throw ApiError.notFound("Listing not found");
   if (active && product.status !== "inactive") throw ApiError.conflict("Only approved listings that were paused can be re-activated", "LISTING_NOT_APPROVED");
-  await product.update({ status: active ? "active" : "inactive" });
+  await product.update({ status: active ? "active" : "inactive", paused_by_suspension: false });
   return product;
 }
 

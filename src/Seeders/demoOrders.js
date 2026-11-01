@@ -2,7 +2,7 @@
 // every state a dashboard can show has an example. Runs after demoData.js.
 const fs = require("fs");
 const path = require("path");
-const { sequelize, User, Product, ArtworkAsset, Order, OrderItem, Commission, Vendor, Review, Address } = require("../Models");
+const { sequelize, User, Product, ArtworkAsset, Order, OrderItem, Commission, Vendor, Review, Address, ProductionJob } = require("../Models");
 const accessService = require("../Services/accessService");
 const cartService = require("../Services/cartService");
 const orderService = require("../Services/orderService");
@@ -128,7 +128,10 @@ async function seedDemoOrders() {
   // 6. Craftwood marketplace listing: delivered and past the complaint window, so it is settleable.
   const keychain = await product("engraved-walnut-keychain");
   const o6 = await order(priya, [{ productId: keychain.id, variantId: keychain.variants[0].id, quantity: 4 }]);
-  const job6 = await productionService.assign(admin, { orderItemId: o6.items[0].id, source: "vendor", vendorId: craftwood.id });
+  // Paid marketplace lines are routed to their seller automatically (productionService.autoRouteMarketplace).
+  const job6 =
+    (await ProductionJob.findOne({ where: { order_item_id: o6.items[0].id, vendor_id: craftwood.id, status: "assigned" } })) ||
+    (await productionService.assign(admin, { orderItemId: o6.items[0].id, source: "vendor", vendorId: craftwood.id }));
   await productionService.respond(arjun, job6.id, { accept: true });
   await runJob(arjun, job6.id);
   const s6 = await shipmentService.createShipment(arjun, { jobIds: [job6.id], carrier: "India Post", trackingNumber: `EM${Date.now()}IN` });

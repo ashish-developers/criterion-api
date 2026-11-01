@@ -24,6 +24,7 @@ const {
   Product,
   DesignVersion,
   ProductionJob,
+  JobEvent,
   Ticket,
   User,
   Commission,
@@ -59,6 +60,9 @@ async function event(orderId, itemId, name, { from, to, note, actorId, visible =
   );
 }
 
+// Orders already queued for marketplace routing, per transaction.
+const autoRouted = new WeakMap();
+
 async function refreshOrderStatus(orderId, transaction) {
   const order = await Order.findByPk(orderId, { transaction, lock: transaction.LOCK.UPDATE });
   const items = await OrderItem.findAll({ where: { order_id: orderId }, transaction });
@@ -71,12 +75,21 @@ async function refreshOrderStatus(orderId, transaction) {
   if (status === "delivered" && !order.delivered_at) patch.delivered_at = new Date();
   if (status === "completed" && !order.closed_at) patch.closed_at = new Date();
   if (status !== order.status) await order.update(patch, { transaction });
+  // Once committed, ready marketplace lines go to their seller (once per transaction and order).
+  const routed = autoRouted.get(transaction) || new Set();
+  if (!routed.has(orderId)) {
+    routed.add(orderId);
+    autoRouted.set(transaction, routed);
+    transaction.afterCommit(() => require("./productionService").autoRouteMarketplace(orderId).catch(() => {}));
+  }
   return order;
 }
 
 /** Move one order line to a new state, enforcing the state model and logging the timeline. */
-async function transitionItem(item, to, { actorId, note, transaction, visible = true, skipOrderRefresh = false } = {}) {
-  machine.assertTransition(item.state, to, item.previous_state);
+// `restart` lets production take a started line back to the assignment queue; it is used only
+// when the producer can no longer finish it (productionService.unassign for a suspended vendor).
+async function transitionItem(item, to, { actorId, note, transaction, visible = true, skipOrderRefresh = false, restart = false } = {}) {
+  if (!(restart && to === "proof_approved")) machine.assertTransition(item.state, to, item.previous_state);
   const from = item.state;
   const patch = { state: to };
   if (to === "on_hold") patch.previous_state = from;
@@ -561,7 +574,19 @@ async function cancel(auth, orderId, { reason, itemIds }) {
     }
     for (const item of targets) {
       await transitionItem(item, "cancelled", { actorId: auth.user.id, note: reason, transaction, skipOrderRefresh: true });
-      await ProductionJob.update({ status: "cancelled" }, { where: { order_item_id: item.id, status: { [Op.notIn]: ["dispatched", "delivered", "cancelled"] } }, transaction });
+      // Open jobs stop, and a vendor holding one is told (it may already have accepted it).
+      const jobs = await ProductionJob.findAll({ where: { order_item_id: item.id, status: { [Op.notIn]: ["dispatched", "delivered", "cancelled", "rejected"] } }, transaction });
+      for (const job of jobs) {
+        await job.update({ status: "cancelled" }, { transaction });
+        await JobEvent.create({ job_id: job.id, event: "cancelled", status: "cancelled", note: `Order cancelled: ${reason}`, actor_user_id: auth.user.id }, { transaction });
+        if (job.vendor_id) {
+          await require("./productionService").notifyVendor(
+            job.vendor_id,
+            { type: "job_cancelled", title: `Job ${job.job_number} cancelled`, body: `The order was cancelled, so no further work is needed. ${reason}`, link: `/vendor/assigned-orders/${job.id}` },
+            transaction
+          );
+        }
+      }
     }
     // Cancellation is only possible before production, so the reserved blanks go back into stock.
     await adjustStock(targets.map((t) => ({ variant_id: t.variant_id, quantity: t.quantity })), 1, {

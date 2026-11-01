@@ -34,7 +34,10 @@ module.exports = {
   // Listings
   listings: async (req, res) => ok(res, await vendorService.listings(req.auth)),
   createListing: async (req, res) => created(res, await vendorService.saveListing(req.auth, req.body), "Listing submitted for approval"),
-  updateListing: async (req, res) => ok(res, await vendorService.saveListing(req.auth, req.body, req.params.id), "Listing updated and sent for approval"),
+  updateListing: async (req, res) => {
+    const product = await vendorService.saveListing(req.auth, req.body, req.params.id);
+    ok(res, product, product.status === "active" ? "Stock updated; the listing stays live" : "Listing updated and sent for approval");
+  },
   setListingActive: async (req, res) => ok(res, await vendorService.setListingActive(req.auth, req.params.id, Boolean(req.body.active)), "Listing updated"),
 
   // Jobs

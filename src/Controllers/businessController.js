@@ -11,7 +11,7 @@ module.exports = {
               count(*) FILTER (WHERE status NOT IN ('completed','delivered','cancelled','refunded'))::int AS open_orders,
               COALESCE(sum(total_paise) FILTER (WHERE status NOT IN ('cancelled','refunded') AND placed_at > date_trunc('year', now())),0)::bigint AS spend_ytd,
               count(*) FILTER (WHERE approval_status = 'pending')::int AS awaiting_approval,
-              COALESCE(sum(total_paise - amount_paid_paise) FILTER (WHERE status NOT IN ('cancelled','refunded')),0)::bigint AS outstanding
+              COALESCE(sum(total_paise - amount_paid_paise) FILTER (WHERE status NOT IN ('cancelled','refunded','awaiting_approval','pending_confirmation')),0)::bigint AS outstanding
          FROM orders WHERE company_id = :companyId`,
       { replacements: { companyId } }
     );

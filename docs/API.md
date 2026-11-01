@@ -1,6 +1,6 @@
 # API reference
 
-REST API for the MingoKart platform. Base path: `/api/v1`, set by `API_VERSION`. The web app reaches it through the Next.js rewrite, so in the browser it is same-origin at `http://localhost:3000/api/v1`. Direct calls go to `http://localhost:4000/api/v1`.
+REST API for the MingoKart platform. Base path: `/api/v1`, set by `API_VERSION`. The web app reaches it through the Next.js rewrite, so in the browser it is same-origin at `http://localhost:3001/api/v1`. Direct calls go to `http://localhost:4001/api/v1`.
 
 `GET /api/v1/health` returns `{ status: true, data: { env } }` and needs no session.
 
@@ -495,7 +495,7 @@ any open status --decline (staff, reason required)--> rejected
 | POST | `/admin/orders/:id/cancel` | signed in · `orders.manage` |
 | POST | `/admin/orders/:id/confirm` | signed in · `orders.manage` · `{ note?, estimatedDelivery? }` confirms a sales order from a quotation |
 | POST | `/admin/orders/:id/close` | signed in · `orders.manage` · `{ note? }` issues the final invoice and completes a delivered, paid order |
-| POST | `/admin/orders/:id/payments` | signed in · `payments.view` / `refunds.approve` |
+| POST | `/admin/orders/:id/payments` | signed in · `payments.view` and `refunds.approve` (both): records an offline payment |
 | POST | `/admin/order-items/:id/transition` | signed in · `orders.manage` |
 | GET | `/admin/order-items/:id/sources` | signed in · `production.manage` |
 | POST | `/admin/order-items/:id/assign` | signed in · `production.manage` |

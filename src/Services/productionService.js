@@ -63,7 +63,8 @@ async function notifyVendor(vendorId, payload, transaction) {
 async function notifyStaff(permission, payload) {
   const [rows] = await sequelize.query(
     `SELECT DISTINCT ur.user_id FROM user_roles ur JOIN role_permissions rp ON rp.role_id = ur.role_id
-       JOIN permissions p ON p.id = rp.permission_id WHERE p.code = :permission`,
+       JOIN permissions p ON p.id = rp.permission_id JOIN users u ON u.id = ur.user_id AND u.status = 'active'
+      WHERE p.code = :permission`,
     { replacements: { permission } }
   );
   for (const r of rows) await notificationService.notify(r.user_id, { ...payload, email: false });
@@ -221,6 +222,30 @@ async function assign(auth, { orderItemId, source, vendorId, dueDate, agreedCost
 }
 
 /**
+ * Marketplace listings are made by the vendor that sells them, so their ready lines go straight
+ * to that vendor instead of waiting in the staff queue. Lines that already had a job (declined,
+ * or taken back by staff) stay with staff, who route them by hand. Runs after the order's
+ * transaction commits (see orderService.refreshOrderStatus); failures leave the line queued.
+ */
+const SYSTEM = { user: { id: null } };
+async function autoRouteMarketplace(orderId) {
+  const order = await Order.findByPk(orderId);
+  if (!order || ["cancelled", "refunded"].includes(order.status)) return;
+  if (order.confirmation_status === "pending" || order.approval_status === "pending" || !orderService().paymentConditionMet(order)) return;
+  const [lines] = await sequelize.query(
+    `SELECT i.id, p.vendor_id FROM order_items i
+       JOIN products p ON p.id = i.product_id
+       JOIN vendors v ON v.id = p.vendor_id AND v.status = 'approved'
+      WHERE i.order_id = :orderId AND i.state = 'proof_approved' AND p.source_type = 'vendor_listing'
+        AND NOT EXISTS (SELECT 1 FROM production_jobs j WHERE j.order_item_id = i.id)`,
+    { replacements: { orderId } }
+  );
+  for (const line of lines) {
+    await assign(SYSTEM, { orderItemId: line.id, source: "vendor", vendorId: line.vendor_id, notes: "Marketplace order: sent to the listing's seller automatically" }).catch(() => {});
+  }
+}
+
+/**
  * Order lines waiting for a production source: proof approved (or no customisation), payment
  * terms met, order not cancelled. Oldest first, so nothing waits unnoticed.
  */
@@ -271,15 +296,23 @@ async function unassign(auth, jobId, { reason }) {
   return sequelize.transaction(async (transaction) => {
     const job = await ProductionJob.findByPk(jobId, { transaction, lock: transaction.LOCK.UPDATE });
     if (!job) throw ApiError.notFound("Job not found");
+    // A job that has started production can only be taken back from a suspended vendor, who can
+    // no longer finish it; production then restarts with the new source.
+    let restart = false;
     if (!["assigned", "accepted"].includes(job.status)) {
-      throw ApiError.conflict("Only jobs that have not started production can be reassigned", "JOB_STARTED");
+      const vendor = job.vendor_id ? await Vendor.findByPk(job.vendor_id, { transaction }) : null;
+      restart = vendor?.status === "suspended" && ["in_production", "quality_check", "qc_failed", "on_hold"].includes(job.status);
+      if (!restart) throw ApiError.conflict("Only jobs that have not started production (or whose vendor is suspended) can be reassigned", "JOB_STARTED");
     }
     const item = await OrderItem.findByPk(job.order_item_id, { transaction, lock: transaction.LOCK.UPDATE });
     await job.update({ status: "cancelled" }, { transaction });
     await JobEvent.create({ job_id: job.id, event: "unassigned", status: "cancelled", note: reason, actor_user_id: auth.user.id }, { transaction });
     await item.update({ fulfilment_source: null, vendor_id: null }, { transaction });
+    const note = `Taken back from ${job.source === "vendor" ? "the production partner" : "in-house production"}: ${reason}`;
     if (item.state === "assigned") {
-      await orderService().transitionItem(item, "proof_approved", { actorId: auth.user.id, note: `Taken back from ${job.source === "vendor" ? "the production partner" : "in-house production"}: ${reason}`, transaction, visible: false });
+      await orderService().transitionItem(item, "proof_approved", { actorId: auth.user.id, note, transaction, visible: false });
+    } else if (restart && ["in_production", "quality_check", "qc_failed", "on_hold"].includes(item.state)) {
+      await orderService().transitionItem(item, "proof_approved", { actorId: auth.user.id, note, transaction, visible: false, restart: true });
     }
     if (job.vendor_id) {
       await notifyVendor(job.vendor_id, { type: "job_cancelled", title: `Job ${job.job_number} withdrawn`, body: `The platform team reassigned this job. ${reason}`, link: `/vendor/assigned-orders/${job.id}` }, transaction);
@@ -319,7 +352,11 @@ async function respond(auth, jobId, { accept, reasonCode, note }) {
       await item.update({ fulfilment_source: null, vendor_id: null }, { transaction });
       await orderService().transitionItem(item, "proof_approved", { actorId: auth.user.id, note: "Vendor declined the job; awaiting reassignment", transaction, visible: false });
     }
-    if (!accept) await notifyStaff("production.manage", { type: "job_rejected", title: `Job ${job.job_number} rejected by vendor`, body: REJECTION_CODES[reasonCode], link: `/admin/production` });
+    if (!accept) {
+      transaction.afterCommit(() =>
+        notifyStaff("production.manage", { type: "job_rejected", title: `Job ${job.job_number} rejected by vendor`, body: REJECTION_CODES[reasonCode], link: `/admin/production` }).catch(() => {})
+      );
+    }
     return job;
   });
 }
@@ -532,4 +569,4 @@ async function escalateAtRisk() {
   }
 }
 
-module.exports = { sourceOptions, assign, readyToAssign, unassign, respond, updateMilestone, recordQc, list, detail, board, escalateAtRisk, REJECTION_CODES, loadJob, canUpdate, presentJob, notifyStaff, notifyVendor };
+module.exports = { sourceOptions, assign, autoRouteMarketplace, readyToAssign, unassign, respond, updateMilestone, recordQc, list, detail, board, escalateAtRisk, REJECTION_CODES, loadJob, canUpdate, presentJob, notifyStaff, notifyVendor };

@@ -205,6 +205,7 @@ const Product = define(
     allowed_file_types: T.strings,
     max_text_lines: T.int,
     status: T.str,
+    paused_by_suspension: T.bool,
     is_featured: T.bool,
     rating_avg: T.decimal,
     rating_count: T.int,

@@ -423,6 +423,14 @@ async function updateCompanyTerms(id, data) {
     preferred_vendor_id: data.preferredVendorId === undefined ? company.preferred_vendor_id : data.preferredVendorId,
     status: data.status ?? company.status,
   });
+  // Suspension signs every member out at once; Middleware/auth.js and sign-in refuse them until reactivated.
+  if (company.status === "suspended" && before.status !== "suspended") {
+    await sequelize.query(
+      `UPDATE sessions SET revoked_at = now() WHERE revoked_at IS NULL
+          AND user_id IN (SELECT user_id FROM user_roles WHERE scope_type = 'company' AND scope_id = :id)`,
+      { replacements: { id } }
+    );
+  }
   return { before, after: company };
 }
 
@@ -474,8 +482,11 @@ async function decideVendor(auth, id, { status, reason, commissionPct }) {
     approved_by: status === "approved" ? auth.user.id : vendor.approved_by,
     commission_pct: commissionPct ?? vendor.commission_pct,
   });
-  // Suspended vendors' listings are hidden from the storefront.
-  if (status === "suspended") await Product.update({ status: "inactive" }, { where: { vendor_id: id, status: "active" } });
+  // Suspended vendors' listings are hidden from the storefront, and come back on reinstatement.
+  if (status === "suspended") await Product.update({ status: "inactive", paused_by_suspension: true }, { where: { vendor_id: id, status: "active" } });
+  if (status === "approved" && before.status === "suspended") {
+    await Product.update({ status: "active", paused_by_suspension: false }, { where: { vendor_id: id, status: "inactive", paused_by_suspension: true } });
+  }
   await notificationService.notify(vendor.owner_user_id, {
     type: "vendor_status",
     title: `Vendor account ${status.replace("_", " ")}`,

@@ -33,6 +33,7 @@ async function resolve(req) {
   const context = await accessService.loadContext(payload.sub);
   if (!context) throw ApiError.unauthorized("Account not found", "TOKEN_INVALID");
   if (context.user.status !== "active") throw ApiError.forbidden("This account is not active", "ACCOUNT_INACTIVE");
+  if (context.companySuspended) throw ApiError.forbidden("Your company account has been suspended. Contact support.", "COMPANY_SUSPENDED");
   context.sessionId = payload.sid;
   return context;
 }
