@@ -90,11 +90,9 @@ class Client {
   }
   async login(email, password = "Demo@1234") {
     await this.csrf();
-    const start = await this.post("/auth/login", { email, password });
-    if (start.status !== 200) throw new Error(`login ${email}: ${start.status} ${JSON.stringify(start.body)}`);
-    const verify = await this.post("/auth/verify-otp", { challengeId: start.data.challengeId, otp: start.data.devOtp });
-    if (verify.status !== 200) throw new Error(`verify ${email}: ${verify.status} ${JSON.stringify(verify.body)}`);
-    return verify.data;
+    const res = await this.post("/auth/login", { email, password });
+    if (res.status !== 200) throw new Error(`login ${email}: ${res.status} ${JSON.stringify(res.body)}`);
+    return res.data;
   }
   async upload(fileBuffer, filename, query = "") {
     const form = new FormData();

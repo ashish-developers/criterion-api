@@ -59,12 +59,16 @@ Stack traces and SQL are never returned. In non-production environments, databas
 
 Order, proof, design, ticket and quote endpoints marked only "signed in" check ownership in the service layer. Customers see their own records. Company members see their company's records, limited by member role. Staff see records according to their permissions.
 
-## Two-step sign-in (email OTP)
+## Sign-in and email verification (OTP)
 
-1. **Start.** `POST /auth/register` or `POST /auth/login` returns a challenge, not a session:
+**Sign-in.** `POST /auth/login` with `{ email, password }` signs an active account in straight away: it sets the session cookies and returns the auth context (`user`, `roles`, `permissions`, `homePath`, ...). No code is needed. An account that has not verified its email yet gets a registration challenge instead (below, `purpose: "register"`), and has no session until it verifies.
+
+**Email verification** (registration, and unverified accounts at sign-in):
+
+1. **Start.** `POST /auth/register` returns a challenge, not a session:
 
    ```json
-   { "challengeId": "uuid", "purpose": "login", "destination": "pr***@demo.test",
+   { "challengeId": "uuid", "purpose": "register", "destination": "pr***@demo.test",
      "expiresAt": "...", "resendAvailableAt": "...", "emailDelivery": false, "devOtp": "123456" }
    ```
 
@@ -299,7 +303,7 @@ These tables are generated from `src/Routes/*.js`. Paths are relative to `/api/v
 |---|---|---|
 | GET | `/auth/csrf` | public |
 | POST | `/auth/register` | public |
-| POST | `/auth/login` | public |
+| POST | `/auth/login` (active account: session + auth context; unverified account: registration challenge) | public |
 | POST | `/auth/verify-otp` | public |
 | POST | `/auth/resend-otp` | public |
 | GET | `/auth/challenges/:challengeId` | public |

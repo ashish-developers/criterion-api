@@ -38,12 +38,10 @@ const register = async (req, res) => {
 };
 
 const login = async (req, res) => {
-  const challenge = await authService.login(req.body, req);
-  const message =
-    challenge.purpose === "register"
-      ? "Your email is not verified yet. Enter the code to activate your account."
-      : "Password accepted. Enter the verification code to finish signing in.";
-  return ok(res, challenge, message);
+  const result = await authService.login(req.body, req);
+  if (result.challenge) return ok(res, result.challenge, "Your email is not verified yet. Enter the code to activate your account.");
+  setSessionCookies(res, result);
+  return ok(res, result.context, "Signed in");
 };
 
 const verifyOtp = async (req, res) => {

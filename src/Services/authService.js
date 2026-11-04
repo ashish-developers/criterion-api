@@ -1,4 +1,5 @@
-// Two-step authentication: password + email OTP for both registration and login.
+// Authentication: registration is confirmed with an email OTP; an active account signs in with
+// its password alone (an account still pending verification gets a registration code instead).
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const { Op } = require("sequelize");
@@ -182,8 +183,17 @@ async function login({ email, password }, req) {
   if (user.status === "suspended") throw ApiError.forbidden("This account has been suspended. Contact support.", "ACCOUNT_SUSPENDED");
   await assertCompanyActive(user.id);
   // An unverified account finishes registration verification instead.
-  const purpose = user.status === "pending" ? "register" : "login";
-  return sequelize.transaction((transaction) => createChallenge(user, purpose, req, transaction));
+  if (user.status === "pending") {
+    return { challenge: await sequelize.transaction((transaction) => createChallenge(user, "register", req, transaction)) };
+  }
+  await user.update({ last_login_at: new Date() });
+  return startSession(user, req);
+}
+
+async function startSession(user, req) {
+  const session = await createSession(user, req);
+  const context = await accessService.loadContext(user.id);
+  return { ...session, context: accessService.publicContext(context) };
 }
 
 // ------------------------------------------------------------- OTP verification
@@ -239,9 +249,7 @@ async function verifyOtp({ challengeId, otp }, req) {
     if (challenge.purpose === "register" && user.status === "pending") await activateUser(user, transaction);
     await user.update({ last_login_at: new Date() }, { transaction });
   });
-  const session = await createSession(user, req);
-  const context = await accessService.loadContext(user.id);
-  return { ...session, context: accessService.publicContext(context) };
+  return startSession(user, req);
 }
 
 async function resendOtp({ challengeId }) {

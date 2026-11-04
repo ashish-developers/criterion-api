@@ -1,4 +1,4 @@
-// Two-step authentication: registration and login both require a server-verified OTP.
+// Authentication: registration requires a server-verified OTP; an active account signs in with its password.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { Client, shutdown, db } = require("./helpers");
@@ -15,6 +15,15 @@ const newUser = (overrides = {}) => ({
   acceptTerms: true,
   ...overrides,
 });
+
+// A fresh registration challenge, for the OTP rules (expiry, attempts, resend).
+async function registrationChallenge() {
+  const c = new Client();
+  await c.csrf();
+  const reg = await c.post("/auth/register", newUser());
+  assert.equal(reg.status, 201);
+  return { c, start: reg };
+}
 
 test("registration activates the account only after OTP verification", async () => {
   const c = new Client();
@@ -57,23 +66,36 @@ test("duplicate email is rejected and validation errors are field-level", async 
   assert.ok(invalid.body.details.email && invalid.body.details.password && invalid.body.details.confirmPassword);
 });
 
-test("login needs a valid password and then a valid OTP", async () => {
+test("an active account signs in with its password alone", async () => {
   const c = new Client();
   await c.csrf();
   assert.equal((await c.post("/auth/login", { email: "priya@demo.test", password: "wrong" })).status, 401);
-  const start = await c.post("/auth/login", { email: "priya@demo.test", password: "Demo@1234" });
-  assert.equal(start.status, 200);
-  assert.equal(start.data.purpose, "login");
-  assert.equal((await c.get("/auth/me")).status, 401, "password alone does not create a session");
-  const verify = await c.post("/auth/verify-otp", { challengeId: start.data.challengeId, otp: start.data.devOtp });
-  assert.equal(verify.status, 200);
-  assert.equal(verify.data.user.email, "priya@demo.test");
+  assert.equal((await c.get("/auth/me")).status, 401, "a wrong password creates no session");
+  const res = await c.post("/auth/login", { email: "priya@demo.test", password: "Demo@1234" });
+  assert.equal(res.status, 200);
+  assert.equal(res.data.user.email, "priya@demo.test");
+  assert.equal(res.data.challengeId, undefined, "no OTP step");
+  assert.ok(c.cookies.access_token && c.cookies.refresh_token, "session cookies set");
+  assert.equal((await c.get("/auth/me")).status, 200);
+});
+
+test("an account still pending email verification gets a registration code at login", async () => {
+  const c = new Client();
+  await c.csrf();
+  const input = newUser();
+  assert.equal((await c.post("/auth/register", input)).status, 201);
+  const other = new Client();
+  await other.csrf();
+  const res = await other.post("/auth/login", { email: input.email, password: input.password });
+  assert.equal(res.status, 200);
+  assert.equal(res.data.purpose, "register");
+  assert.equal((await other.get("/auth/me")).status, 401, "no session until the email is verified");
+  assert.equal((await other.post("/auth/verify-otp", { challengeId: res.data.challengeId, otp: res.data.devOtp })).status, 200);
+  assert.equal((await other.get("/auth/me")).status, 200);
 });
 
 test("expired OTPs are rejected", async () => {
-  const c = new Client();
-  await c.csrf();
-  const start = await c.post("/auth/login", { email: "priya@demo.test", password: "Demo@1234" });
+  const { c, start } = await registrationChallenge();
   const { VerificationChallenge } = await db();
   await VerificationChallenge.update({ expires_at: new Date(Date.now() - 1000) }, { where: { id: start.data.challengeId } });
   const res = await c.post("/auth/verify-otp", { challengeId: start.data.challengeId, otp: start.data.devOtp });
@@ -82,9 +104,7 @@ test("expired OTPs are rejected", async () => {
 });
 
 test("too many wrong attempts invalidate the challenge, even for the right code", async () => {
-  const c = new Client();
-  await c.csrf();
-  const start = await c.post("/auth/login", { email: "priya@demo.test", password: "Demo@1234" });
+  const { c, start } = await registrationChallenge();
   const wrong = start.data.devOtp === "999999" ? "888888" : "999999";
   let last;
   for (let i = 0; i < 5; i++) last = await c.post("/auth/verify-otp", { challengeId: start.data.challengeId, otp: wrong });
@@ -95,9 +115,7 @@ test("too many wrong attempts invalidate the challenge, even for the right code"
 });
 
 test("resend is rate limited by cooldown and issues a new code", async () => {
-  const c = new Client();
-  await c.csrf();
-  const start = await c.post("/auth/login", { email: "priya@demo.test", password: "Demo@1234" });
+  const { c, start } = await registrationChallenge();
   const early = await c.post("/auth/resend-otp", { challengeId: start.data.challengeId });
   assert.equal(early.status, 429);
   const { VerificationChallenge } = await db();
@@ -159,10 +177,7 @@ test("development OTP is never returned when disabled", async () => {
   const previous = config.otp.showDevOtp;
   config.otp.showDevOtp = false;
   try {
-    const c = new Client();
-    await c.csrf();
-    const start = await c.post("/auth/login", { email: "priya@demo.test", password: "Demo@1234" });
-    assert.equal(start.status, 200);
+    const { start } = await registrationChallenge();
     assert.equal(start.data.devOtp, undefined);
   } finally {
     config.otp.showDevOtp = previous;
