@@ -38,10 +38,11 @@ router.get("/orders", validate({ query: v.listQuery }), c.orders);
 router.get("/orders/:id", id, c.order);
 router.post("/orders/:id/cancel", id, validate({ body: v.cancel.pick({ reason: true }) }), c.cancel);
 router.put("/orders/:id/artwork", perUser("vc-save", 120), id, validate({ body: v.artworkUpdate }), c.updateArtwork);
-router.post("/orders/:id/payments", perUser("vc-pay", 20), id, c.createPayment);
+router.post("/orders/:id/payments", perUser("vc-pay", 20), id, validate({ body: cv.paymentStart }), c.createPayment);
 router.get("/orders/:id/invoice", id, c.invoice);
 
 router.post("/payments/verify", validate({ body: cv.paymentVerify }), c.verifyPayment);
+router.post("/payments/paypal/capture", perUser("vc-paypal-capture", 20), validate({ body: cv.paypalCapture }), c.capturePaypal);
 // Development-only simulated gateway (refused unless PAYMENT_PROVIDER=mock outside production).
 router.post("/payments/:id/mock-complete", id, validate({ body: cv.mockComplete }), c.completeMockPayment);
 router.get("/payments/:id/receipt", id, c.receipt);

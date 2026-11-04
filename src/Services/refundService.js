@@ -4,7 +4,7 @@ const { Op } = require("sequelize");
 const { sequelize, Order, Payment, Refund, OrderItem } = require("../Models");
 const ApiError = require("../Utils/ApiError");
 const { SUPPORT_REFUND_LIMIT_PAISE } = require("../Config/roles");
-const providers = require("./paymentProviders");
+const gatewayCheckout = require("./gatewayCheckout");
 const notificationService = require("./notificationService");
 
 function refundable(order) {
@@ -33,8 +33,7 @@ async function processRefund(refund, { actorId, transaction }) {
     if (payment.provider === "offline") {
       reference = "manual-bank-transfer";
     } else {
-      const provider = providers.providers[payment.provider];
-      const result = await provider.refund({ providerPaymentId: payment.provider_payment_id, amountPaise: amount });
+      const result = await gatewayCheckout.refund(payment, amount, { requestId: `refund-${refund.id}-${payment.id}` });
       reference = result.providerRefundId;
     }
     references.push(reference);

@@ -8,38 +8,27 @@
 const { Op } = require("sequelize");
 const { sequelize, VcOrder, VcPayment, VcInvoice, VcOrderCard, User, Company } = require("../Models");
 const ApiError = require("../Utils/ApiError");
-const { config } = require("../Config/env");
 const { nextNumber } = require("../Utils/numbering");
-const providers = require("./paymentProviders");
+const gatewayService = require("./gatewayService");
+const gatewayCheckout = require("./gatewayCheckout");
 const settingsService = require("./settingsService");
 const orders = require("./vcOrderService");
 
-async function createIntent(auth, orderId) {
+async function createIntent(auth, orderId, { gateway } = {}) {
   return sequelize.transaction(async (transaction) => {
     const order = await orders.loadForCustomer(auth, orderId, { transaction, lock: transaction.LOCK.UPDATE });
     if (order.status === "cancelled") throw ApiError.conflict("This order has been cancelled", "ORDER_CANCELLED");
     if (order.payment_status !== "unpaid") throw ApiError.conflict("This order is already paid", "ALREADY_PAID");
-    const amount = order.total_paise - order.amount_paid_paise;
-    const provider = providers.current();
-    let payment = await VcPayment.findOne({ where: { order_id: order.id, status: "created", provider: provider.name, amount_paise: amount }, transaction });
-    if (!payment) {
-      const created = await provider.createOrder({ amountPaise: amount, receipt: order.order_number, notes: { vc_order_id: order.id } });
-      payment = await VcPayment.create(
-        { order_id: order.id, provider: provider.name, provider_order_id: created.providerOrderId, amount_paise: amount, status: "created", created_by: auth.user.id },
-        { transaction }
-      );
-    }
-    return {
-      paymentId: payment.id,
-      provider: provider.name,
-      providerOrderId: payment.provider_order_id,
-      amountPaise: payment.amount_paise,
-      purpose: "full",
-      currency: "INR",
+    const intent = await gatewayCheckout.openPayment(ledger, {
+      orderId: order.id,
       orderNumber: order.order_number,
-      prefill: { name: auth.user.name, email: auth.user.email, contact: auth.user.phone },
-      ...provider.checkoutOptions(),
-    };
+      amountPaise: order.total_paise - order.amount_paid_paise,
+      gatewayCode: gateway,
+      auth,
+      notes: { vc_order_id: order.id },
+      transaction,
+    });
+    return { ...intent, purpose: "full" };
   });
 }
 
@@ -167,6 +156,9 @@ async function fail(paymentId, reason) {
   return payment;
 }
 
+// Visiting card orders' ledger for the shared gateway checkout (gatewayCheckout).
+const ledger = { name: "visiting_cards", Model: VcPayment, capture: (...args) => capture(...args), fail: (...args) => fail(...args) };
+
 async function ownPayment(auth, paymentId) {
   const payment = await VcPayment.findByPk(paymentId);
   if (!payment) throw ApiError.notFound("Payment not found");
@@ -176,22 +168,24 @@ async function ownPayment(auth, paymentId) {
   return payment;
 }
 
-// Razorpay checkout handler result, posted by the browser. Only the signature is trusted.
+// Razorpay checkout handler result, posted by the browser. Confirmed with Razorpay before it counts.
 async function verifyCheckout(auth, { paymentId, providerOrderId, providerPaymentId, signature }) {
   const payment = await ownPayment(auth, paymentId);
-  if (payment.provider !== "razorpay") throw ApiError.badRequest("Wrong payment provider", undefined, "PROVIDER_MISMATCH");
-  if (payment.provider_order_id !== providerOrderId) throw ApiError.badRequest("Payment does not match this order", undefined, "PAYMENT_MISMATCH");
-  if (!providers.providers.razorpay.verifyCheckoutSignature({ providerOrderId, providerPaymentId, signature })) {
-    await fail(payment.id, "Signature verification failed");
-    throw ApiError.badRequest("Payment could not be verified", undefined, "SIGNATURE_INVALID");
-  }
-  await capture(payment.id, { providerPaymentId, actorId: auth.user.id, signatureVerified: true, raw: { providerOrderId } });
+  await gatewayCheckout.verifyRazorpay(ledger, payment, { providerOrderId, providerPaymentId, signature, actorId: auth.user.id });
   return orders.detail(auth, payment.order_id);
+}
+
+// PayPal onApprove: the server captures the order with PayPal and checks the result.
+async function capturePaypal(auth, { paymentId, providerOrderId }) {
+  const payment = await ownPayment(auth, paymentId);
+  if (payment.provider_order_id !== providerOrderId) throw ApiError.badRequest("Payment does not match this order", undefined, "PAYMENT_MISMATCH");
+  const result = await gatewayCheckout.settlePaypal(ledger, payment, { actorId: auth.user.id });
+  return { pending: Boolean(result.pending), order: await orders.detail(auth, payment.order_id) };
 }
 
 // Development-only simulated gateway: completes or fails a mock payment server-side.
 async function completeMock(auth, paymentId, outcome) {
-  if (config.isProduction || config.payments.provider !== "mock") throw ApiError.forbidden("Mock payments are disabled");
+  if (!gatewayService.mockEnabled()) throw ApiError.forbidden("Mock payments are disabled");
   const payment = await ownPayment(auth, paymentId);
   if (payment.provider !== "mock") throw ApiError.notFound("Payment not found");
   if (outcome === "failure") {
@@ -200,19 +194,6 @@ async function completeMock(auth, paymentId, outcome) {
   }
   await capture(payment.id, { providerPaymentId: `mock_pay_${payment.id.replace(/-/g, "").slice(0, 16)}`, method: "upi", actorId: auth.user.id, signatureVerified: true, raw: { simulated: true } });
   return orders.detail(auth, payment.order_id);
-}
-
-// Called by the platform webhook handler (already signature-checked and de-duplicated) when
-// the gateway order is not a regular shop payment. Returns true when it was ours.
-async function handleGatewayEvent(eventType, entity) {
-  const payment = await VcPayment.findOne({ where: { provider: "razorpay", provider_order_id: entity.order_id } });
-  if (!payment) return false;
-  if (["payment.captured", "order.paid"].includes(eventType)) {
-    await capture(payment.id, { providerPaymentId: entity.id, method: entity.method, raw: { webhook: eventType }, signatureVerified: true });
-  } else if (eventType === "payment.failed") {
-    await fail(payment.id, entity.error_description || "Payment failed");
-  }
-  return true;
 }
 
 // Finance records a bank transfer (or other offline payment) for the full outstanding amount.
@@ -230,8 +211,7 @@ async function refundPayment(payment, { reason, actorId }) {
   if (payment.status !== "captured") return 0;
   let providerRefundId = null;
   if (payment.provider !== "offline") {
-    const provider = providers.providers[payment.provider];
-    const result = await provider.refund({ providerPaymentId: payment.provider_payment_id, amountPaise: payment.amount_paise });
+    const result = await gatewayCheckout.refund(payment, payment.amount_paise, { requestId: `vc-refund-${payment.id}` });
     providerRefundId = result.providerRefundId;
   }
   await payment.update({ status: "refunded", refunded_at: new Date(), provider_refund_id: providerRefundId, raw: { ...(payment.raw || {}), refund_reason: reason, refunded_by: actorId || null } });
@@ -307,4 +287,4 @@ async function expireStaleIntents() {
   await VcPayment.update({ status: "failed", failure_reason: "Abandoned" }, { where: { status: "created", created_at: { [Op.lt]: cutoff }, provider: { [Op.ne]: "offline" } } });
 }
 
-module.exports = { createIntent, capture, fail, verifyCheckout, completeMock, handleGatewayEvent, recordOffline, refundOrder, invoice, receipt, list, expireStaleIntents, issueInvoice };
+module.exports = { ledger, createIntent, capture, fail, verifyCheckout, capturePaypal, completeMock, recordOffline, refundOrder, invoice, receipt, list, expireStaleIntents, issueInvoice };

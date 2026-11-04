@@ -182,6 +182,9 @@ const VcPayment = define("VcPayment", "vc_payments", {
   captured_at: T.time,
   refunded_at: T.time,
   created_by: T.uuid,
+  gateway_mode: T.str,
+  gateway_currency: T.str,
+  gateway_amount: T.money,
 });
 
 const VcInvoice = define(

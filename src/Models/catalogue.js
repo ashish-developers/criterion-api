@@ -20,6 +20,10 @@ const Company = define("Company", "companies", {
   is_key_account: T.bool,
   preferred_vendor_id: T.uuid,
   is_demo: T.bool,
+  verification_status: T.str,
+  verification_note: T.str,
+  verified_at: T.time,
+  verified_by: T.uuid,
 });
 
 const CompanyMember = define(

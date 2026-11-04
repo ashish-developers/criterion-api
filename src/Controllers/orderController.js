@@ -2,6 +2,8 @@ const cartService = require("../Services/cartService");
 const orderService = require("../Services/orderService");
 const proofService = require("../Services/proofService");
 const paymentService = require("../Services/paymentService");
+const gatewayService = require("../Services/gatewayService");
+const gatewayCheckout = require("../Services/gatewayCheckout");
 const invoiceService = require("../Services/invoiceService");
 const reviewService = require("../Services/reviewService");
 const { ok, created, pageMeta } = require("../Utils/http");
@@ -45,10 +47,16 @@ module.exports = {
   requestProofChanges: async (req, res) => ok(res, await proofService.requestChanges(req.auth, req.params.id, req.body), "Change request sent"),
 
   // Payments
-  createPayment: async (req, res) => created(res, await paymentService.createIntent(req.auth, req.params.id), "Payment started"),
+  paymentGateways: async (req, res) => ok(res, await gatewayService.available()),
+  createPayment: async (req, res) => created(res, await paymentService.createIntent(req.auth, req.params.id, req.body || {}), "Payment started"),
   verifyPayment: async (req, res) => ok(res, await paymentService.verifyCheckout(req.auth, req.body), "Payment verified"),
+  capturePaypal: async (req, res) => {
+    const result = await paymentService.capturePaypal(req.auth, req.body);
+    return ok(res, result, result.pending ? "PayPal is still processing this payment. We will update your order when it completes." : "Payment verified");
+  },
   completeMockPayment: async (req, res) => ok(res, await paymentService.completeMock(req.auth, req.params.id, req.body.outcome), "Payment successful"),
-  razorpayWebhook: async (req, res) => ok(res, await paymentService.handleRazorpayWebhook(req)),
+  razorpayWebhook: async (req, res) => ok(res, await gatewayCheckout.handleRazorpayWebhook(req)),
+  paypalWebhook: async (req, res) => ok(res, await gatewayCheckout.handlePaypalWebhook(req)),
 
   // Reviews
   productReviews: async (req, res) => ok(res, await reviewService.forProduct(req.params.id)),

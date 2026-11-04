@@ -25,12 +25,15 @@ router.get("/orders/:id/proofs", requireAuth, validate({ params: v.idParam }), c
 router.get("/orders/:id/invoice", requireAuth, validate({ params: v.idParam }), c.invoice);
 router.post("/orders/:id/cancel", requireAuth, validate({ params: v.idParam, body: v.cancel }), c.cancel);
 router.post("/orders/:id/reorder", ...buyer, validate({ params: v.idParam }), c.reorder);
-router.post("/orders/:id/payments", ...buyer, rateLimit({ name: "pay", windowMs: 60 * 1000, max: 20 }), validate({ params: v.idParam }), c.createPayment);
+router.post("/orders/:id/payments", ...buyer, rateLimit({ name: "pay", windowMs: 60 * 1000, max: 20 }), validate({ params: v.idParam, body: v.paymentStart }), c.createPayment);
 
 router.post("/proofs/:id/approve", requireAuth, validate({ params: v.idParam, body: v.proofDecision }), c.approveProof);
 router.post("/proofs/:id/request-changes", requireAuth, validate({ params: v.idParam, body: v.proofChanges }), c.requestProofChanges);
 
+// Gateways the checkout may offer (enabled in Payment gateway settings); no credentials.
+router.get("/payments/gateways", requireAuth, c.paymentGateways);
 router.post("/payments/verify", ...buyer, validate({ body: v.paymentVerify }), c.verifyPayment);
+router.post("/payments/paypal/capture", ...buyer, rateLimit({ name: "paypal-capture", windowMs: 60 * 1000, max: 20, by: (req) => req.auth?.user?.id }), validate({ body: v.paypalCapture }), c.capturePaypal);
 // Development-only simulated gateway (refused unless PAYMENT_PROVIDER=mock outside production).
 router.post("/payments/:id/mock-complete", ...buyer, validate({ params: v.idParam, body: v.mockComplete }), c.completeMockPayment);
 

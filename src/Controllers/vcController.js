@@ -58,8 +58,12 @@ const customer = {
     const order = await orders.updateArtwork(req.auth, req.params.id, req.body);
     return ok(res, order, order.artworkStatus === "submitted" ? "Corrected artwork sent for review" : "Artwork updated");
   },
-  createPayment: async (req, res) => created(res, await payments.createIntent(req.auth, req.params.id), "Payment started"),
+  createPayment: async (req, res) => created(res, await payments.createIntent(req.auth, req.params.id, req.body || {}), "Payment started"),
   verifyPayment: async (req, res) => ok(res, await payments.verifyCheckout(req.auth, req.body), "Payment verified"),
+  capturePaypal: async (req, res) => {
+    const result = await payments.capturePaypal(req.auth, req.body);
+    return ok(res, result, result.pending ? "PayPal is still processing this payment. We will update your order when it completes." : "Payment verified");
+  },
   completeMockPayment: async (req, res) => ok(res, await payments.completeMock(req.auth, req.params.id, req.body.outcome), "Payment successful"),
   invoice: async (req, res) => ok(res, await payments.invoice(req.auth, req.params.id)),
   receipt: async (req, res) => ok(res, await payments.receipt(req.auth, req.params.id)),

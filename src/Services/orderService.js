@@ -190,6 +190,7 @@ async function ownedAddress(auth, id, transaction) {
 
 // ------------------------------------------------------------------ checkout
 async function checkout(auth, input) {
+  require("./accessService").assertCompanyCanOrder(auth);
   // Idempotency: the same key from the same user returns the original order.
   if (input.idempotencyKey) {
     const existing = await Order.findOne({ where: { user_id: auth.user.id, idempotency_key: input.idempotencyKey } });
@@ -557,6 +558,7 @@ async function cancel(auth, orderId, { reason, itemIds }) {
     if (!targets.length) throw ApiError.unprocessable("Nothing left to cancel on this order", "NOTHING_TO_CANCEL");
 
     let charges = 0;
+    const lineCharges = new Map();
     for (const item of targets) {
       const effective = item.state === "on_hold" ? item.previous_state : item.state;
       let policy = machine.cancellationPolicy(effective);
@@ -569,7 +571,9 @@ async function cancel(auth, orderId, { reason, itemIds }) {
         // Setup and blank costs already incurred are retained (Section 7.6).
         const product = await Product.findByPk(item.product_id, { transaction });
         const blank = product.base_cost_paise * item.quantity;
-        charges += Math.min(item.line_total_paise, item.setup_fee_paise + blank);
+        const lineCharge = Math.min(item.line_total_paise, item.setup_fee_paise + blank);
+        lineCharges.set(item.id, lineCharge);
+        charges += lineCharge;
       }
     }
     for (const item of targets) {
@@ -577,12 +581,22 @@ async function cancel(auth, orderId, { reason, itemIds }) {
       // Open jobs stop, and a vendor holding one is told (it may already have accepted it).
       const jobs = await ProductionJob.findAll({ where: { order_item_id: item.id, status: { [Op.notIn]: ["dispatched", "delivered", "cancelled", "rejected"] } }, transaction });
       for (const job of jobs) {
+        // A vendor who had already accepted the job earns this line's retained charges (capped at
+        // the agreed job cost), paid in its next settlement.
+        const compensation = job.vendor_id && job.status === "accepted" ? Math.min(lineCharges.get(item.id) || 0, job.agreed_cost_paise || Infinity) : 0;
         await job.update({ status: "cancelled" }, { transaction });
         await JobEvent.create({ job_id: job.id, event: "cancelled", status: "cancelled", note: `Order cancelled: ${reason}`, actor_user_id: auth.user.id }, { transaction });
+        if (compensation > 0) {
+          await Commission.create(
+            { order_item_id: item.id, vendor_id: job.vendor_id, model: "cancellation", item_value_paise: compensation, commission_pct: 0, commission_paise: 0, vendor_earning_paise: compensation, eligible_at: new Date() },
+            { transaction }
+          );
+        }
         if (job.vendor_id) {
+          const paid = compensation > 0 ? ` You will be paid ₹${(compensation / 100).toFixed(2)} for setup and materials in your next settlement.` : "";
           await require("./productionService").notifyVendor(
             job.vendor_id,
-            { type: "job_cancelled", title: `Job ${job.job_number} cancelled`, body: `The order was cancelled, so no further work is needed. ${reason}`, link: `/vendor/assigned-orders/${job.id}` },
+            { type: "job_cancelled", title: `Job ${job.job_number} cancelled`, body: `The order was cancelled, so no further work is needed. ${reason}${paid}`, link: `/vendor/assigned-orders/${job.id}` },
             transaction
           );
         }

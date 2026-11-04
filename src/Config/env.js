@@ -39,6 +39,8 @@ const config = {
   port: int("APP_PORT", 4001),
   apiPrefix,
   webAppUrl: str("WEB_APP_URL", "http://localhost:3001"),
+  // Public address of this API (shown as the webhook URL in Payment gateway settings).
+  publicApiUrl: str("PUBLIC_API_URL"),
   corsOrigins: str("CORS_ORIGINS", str("WEB_APP_URL", "http://localhost:3001"))
     .split(",")
     .map((o) => o.trim())
@@ -98,8 +100,11 @@ const config = {
     from: str("MAIL_FROM", "Branding Platform <no-reply@localhost>"),
   },
 
+  // Gateways (Razorpay, PayPal), modes and keys are managed in the admin panel (Payment gateway
+  // settings). PAYMENT_PROVIDER=mock adds the simulated gateway outside production; the
+  // RAZORPAY_* values are only read once, to import an older .env setup (gatewayService).
   payments: {
-    provider: str("PAYMENT_PROVIDER", "mock"), // mock | razorpay
+    provider: str("PAYMENT_PROVIDER", "mock"), // mock | razorpay | none
     razorpayKeyId: str("RAZORPAY_KEY_ID"),
     razorpayKeySecret: str("RAZORPAY_KEY_SECRET"),
     razorpayWebhookSecret: str("RAZORPAY_WEBHOOK_SECRET"),
@@ -109,6 +114,26 @@ const config = {
     driver: str("STORAGE_DRIVER", "local"),
     localPath: str("STORAGE_LOCAL_PATH", "storage/uploads"),
     maxUploadMb: int("UPLOAD_MAX_MB", 25),
+    // STORAGE_DRIVER=s3: any S3-compatible private bucket. S3_ENDPOINT is empty for AWS
+    // (https://s3.<region>.amazonaws.com), or e.g. https://<account>.r2.cloudflarestorage.com.
+    s3: {
+      endpoint: str("S3_ENDPOINT"),
+      region: str("S3_REGION", "auto"),
+      bucket: str("S3_BUCKET"),
+      accessKeyId: str("S3_ACCESS_KEY_ID"),
+      secretAccessKey: str("S3_SECRET_ACCESS_KEY"),
+      forcePathStyle: bool("S3_FORCE_PATH_STYLE", true),
+      prefix: str("S3_PREFIX"),
+    },
+  },
+
+  // Antivirus: uploads are streamed to a ClamAV daemon (clamd) when CLAMAV_HOST is set.
+  antivirus: {
+    host: str("CLAMAV_HOST"),
+    port: int("CLAMAV_PORT", 3310),
+    timeoutMs: int("CLAMAV_TIMEOUT_MS", 15000),
+    // Refuse uploads while the scanner cannot be reached (otherwise they pass with a warning).
+    required: bool("CLAMAV_REQUIRED", false),
   },
 };
 
@@ -121,6 +146,11 @@ function assertConfig() {
     problems.push("DEV_DEFAULT_PASSWORD / DEV_EMAIL_DEFAULT_PASSWORD must not be set when APP_ENV=production");
   if (config.users.devDefaultPassword && config.users.devDefaultPassword.length < 8)
     problems.push("DEV_DEFAULT_PASSWORD must be at least 8 characters");
+  if (!["local", "s3"].includes(config.storage.driver)) problems.push(`STORAGE_DRIVER must be local or s3 (got "${config.storage.driver}")`);
+  if (config.storage.driver === "s3" && !(config.storage.s3.bucket && config.storage.s3.accessKeyId && config.storage.s3.secretAccessKey))
+    problems.push("STORAGE_DRIVER=s3 needs S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY");
+  if (config.storage.driver === "s3" && !config.storage.s3.endpoint && config.storage.s3.region === "auto")
+    problems.push("Set S3_REGION (e.g. ap-south-1) for AWS S3, or S3_ENDPOINT for another provider");
   if (config.isProduction && config.payments.provider === "mock")
     problems.push("PAYMENT_PROVIDER=mock is not allowed when APP_ENV=production");
   return problems;

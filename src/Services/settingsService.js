@@ -75,13 +75,15 @@ const DEFAULTS = {
 };
 
 let cache = null;
+// Rows with their own admin screen and secrets (Email (SMTP) settings) are never listed here.
+const PRIVATE = new Set(["smtp"]);
 
 async function loadAll() {
   if (cache) return cache;
   const rows = await Setting.findAll();
   const values = {};
   for (const [key, def] of Object.entries(DEFAULTS)) values[key] = structuredClone(def.value);
-  for (const row of rows) values[row.key] = { ...(values[row.key] || {}), ...row.value };
+  for (const row of rows) if (!PRIVATE.has(row.key)) values[row.key] = { ...(values[row.key] || {}), ...row.value };
   cache = values;
   return values;
 }

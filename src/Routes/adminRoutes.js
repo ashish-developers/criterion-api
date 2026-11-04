@@ -8,6 +8,7 @@ const { validate } = require("../Middleware/validate");
 const { requireAuth, requirePermission: can } = require("../Middleware/auth");
 const { mountUserAdmin } = require("./userAdminRoutes");
 const tax = require("../Controllers/taxController");
+const { rateLimit } = require("../Middleware/rateLimit");
 
 const id = validate({ params: v.idParam });
 router.use(requireAuth);
@@ -43,7 +44,7 @@ router.get("/orders/:id", can("orders.view", "production.view"), id, c.order);
 router.post("/orders/:id/cancel", can("orders.manage"), id, validate({ body: cv.cancel }), c.cancelOrder);
 router.post("/orders/:id/confirm", can("orders.manage"), id, validate({ body: v.orderConfirm }), c.confirmOrder);
 router.post("/orders/:id/close", can("orders.manage"), id, validate({ body: v.orderClose }), c.closeOrder);
-router.post("/orders/:id/payments", can("payments.view"), can("refunds.approve"), id, validate({ body: v.offlinePayment }), c.offlinePayment);
+router.post("/orders/:id/payments", can("payments.view", "refunds.approve"), id, validate({ body: v.offlinePayment }), c.offlinePayment);
 router.post("/order-items/:id/transition", can("orders.manage"), id, validate({ body: v.itemTransition }), c.transitionItem);
 router.get("/order-items/:id/sources", can("production.manage"), id, c.sourceOptions);
 router.post("/order-items/:id/assign", can("production.manage"), id, validate({ body: v.assign }), c.assign);
@@ -61,7 +62,8 @@ router.get("/shipments", can("shipping.manage"), c.shipments);
 router.post("/shipments/:id/tracking", can("shipping.manage"), id, validate({ body: v.tracking }), c.tracking);
 
 // Money
-router.get("/payments", can("payments.view"), c.payments);
+router.get("/payments", can("payments.view"), validate({ query: v.paymentList }), c.payments);
+router.get("/payments/:id", can("payments.view"), id, c.payment);
 router.get("/refunds", can("refunds.request", "refunds.approve"), c.refunds);
 router.post("/refunds", can("refunds.request", "refunds.approve"), validate({ body: v.refundRequest }), c.requestRefund);
 router.post("/refunds/:id/decision", can("refunds.approve"), id, validate({ body: v.refundDecision }), c.decideRefund);
@@ -89,12 +91,12 @@ router.post("/tax/hsn/:id/active", can("settings.manage"), validate({ params: v.
 mountUserAdmin(router, "/platform-users", "platform", [can("roles.manage")]);
 
 router.get("/users", can("customers.view"), c.users);
-router.post("/users/staff", can("roles.manage"), validate({ body: v.staffCreate }), c.createStaff);
 router.post("/users/:id/status", can("customers.manage"), id, validate({ body: v.userStatus }), c.userStatus);
 router.put("/users/:id/roles", can("roles.manage"), id, validate({ body: v.userRoles }), c.userRoles);
-router.get("/companies", can("customers.view"), c.companies);
+router.get("/companies", can("customers.view"), validate({ query: v.companyList }), c.companies);
 router.get("/companies/:id", can("customers.view"), id, c.company);
 router.put("/companies/:id/terms", can("customers.manage"), id, validate({ body: v.companyTerms }), c.companyTerms);
+router.post("/companies/:id/verification", can("customers.manage"), id, validate({ body: v.companyVerification }), c.verifyCompany);
 router.get("/vendors", can("vendors.view", "production.manage"), c.vendors);
 router.get("/vendors/:id", can("vendors.view"), id, c.vendor);
 router.post("/vendors/:id/decision", can("vendors.manage"), id, validate({ body: v.vendorDecision }), c.decideVendor);
@@ -103,11 +105,25 @@ router.post("/vendors/:id/decision", can("vendors.manage"), id, validate({ body:
 router.get("/coupons", can("coupons.manage"), c.coupons);
 router.post("/coupons", can("coupons.manage"), validate({ body: v.coupon }), c.saveCoupon);
 router.put("/coupons/:id", can("coupons.manage"), id, validate({ body: v.coupon }), c.saveCoupon);
-router.get("/tickets", can("tickets.manage"), validate({ query: cv.ticketList }), c.tickets);
+router.get("/tickets", can("tickets.manage", "tickets.assign"), validate({ query: cv.ticketList }), c.tickets);
+router.get("/tickets/assignees", can("tickets.manage", "tickets.assign"), c.ticketAssignees);
 router.patch("/tickets/:id", can("tickets.manage"), id, validate({ body: v.ticketUpdate }), c.updateTicket);
+// tickets.assign: any team member; tickets.manage alone: pick up an unassigned ticket (checked in the service).
+router.post("/tickets/:id/assign", can("tickets.manage", "tickets.assign"), id, validate({ body: v.ticketAssign }), c.assignTicket);
 router.post("/tickets/:id/resolve", can("tickets.manage"), id, validate({ body: v.complaintDecision }), c.resolveComplaint);
 router.get("/reviews", can("reviews.moderate"), c.reviews);
 router.post("/reviews/:id/moderate", can("reviews.moderate"), id, validate({ body: v.reviewModerate }), c.moderateReview);
+
+// Payment gateways (Razorpay, PayPal): enable, mode, credentials, connection test
+const gateway = validate({ params: v.gatewayCode });
+router.get("/payment-gateways", can("settings.manage"), c.paymentGateways);
+router.put("/payment-gateways/:code", can("settings.manage"), gateway, validate({ body: v.gatewaySave }), c.savePaymentGateway);
+router.post("/payment-gateways/:code/test", can("settings.manage"), gateway, rateLimit({ name: "gateway-test", windowMs: 60 * 1000, max: 10, by: (req) => req.auth?.user?.id }), c.testPaymentGateway);
+
+// Email (SMTP) settings: server, account (password encrypted), sender, test email
+router.get("/mail-settings", can("settings.manage"), c.mailSettings);
+router.put("/mail-settings", can("settings.manage"), validate({ body: v.mailSettings }), c.saveMailSettings);
+router.post("/mail-settings/test", can("settings.manage"), rateLimit({ name: "mail-test", windowMs: 60 * 1000, max: 5, by: (req) => req.auth?.user?.id }), validate({ body: v.mailTest }), c.testMailSettings);
 
 // Settings, roles, CMS, audit
 router.get("/settings", can("settings.manage"), c.settings);

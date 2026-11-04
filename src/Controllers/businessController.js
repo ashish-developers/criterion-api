@@ -52,7 +52,6 @@ module.exports = {
     return ok(res, result, "Company profile updated");
   },
   team: async (req, res) => ok(res, await companyService.team(req.auth)),
-  invite: async (req, res) => created(res, await companyService.invite(req.auth, req.body), "Team member added"),
   updateMember: async (req, res) => ok(res, await companyService.updateMember(req.auth, Number(req.params.id), req.body), req.body.remove ? "Team member removed" : "Role updated"),
   brandKits: async (req, res) => ok(res, await companyService.brandKits(req.auth)),
   createBrandKit: async (req, res) => created(res, await companyService.saveBrandKit(req.auth, req.body), "Brand kit saved"),

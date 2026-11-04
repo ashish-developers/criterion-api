@@ -757,6 +757,7 @@ async function document(auth, id, { version: versionNo } = {}) {
 
 /** Accepting converts the quote into an order at the quoted prices (no repricing). */
 async function accept(auth, id, { addressId, poNumber, gstin }) {
+  require("./accessService").assertCompanyCanOrder(auth);
   return sequelize.transaction(async (transaction) => {
     const quote = await expireIfDue(await loadVisible(auth, id, { transaction, lock: true }), transaction);
     if (!decidesForCustomer(auth, quote)) throw ApiError.forbidden("Only the requester or a company approver can accept this quotation");

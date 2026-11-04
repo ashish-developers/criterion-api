@@ -34,7 +34,6 @@ const vendorApplication = z.object({
 });
 const vendorProfile = vendorApplication.partial().extend({ capabilities: z.array(capability).max(20).optional() });
 const holidays = z.object({ holidays: z.array(z.object({ date, note: optionalText(160) })).max(100) });
-const staff = z.object({ name: z.string().trim().min(2).max(120), email: z.string().trim().email().max(190), phone });
 
 // GST: the rate comes from the tax master (see taxService.resolveForProduct). A form sends the
 // chosen taxRateId; gstRate (a percentage) is still accepted and matched to an active rate.
@@ -109,9 +108,53 @@ const jobUnassign = z.object({ reason: z.string().trim().min(3, "Tell the produc
 const orderConfirm = z.object({ note: optionalText(500), estimatedDelivery: date.optional().nullable() });
 const orderClose = z.object({ note: optionalText(500) });
 const offlinePayment = z.object({ amountPaise: paise.refine((v) => v > 0, "Enter an amount"), reference: z.string().trim().min(3).max(80), note: optionalText(300) });
+// Payment gateway settings. Secrets are write-only: empty keeps the stored value.
+const gatewayCode = z.object({ code: z.enum(["razorpay", "paypal"]) });
+const credentialText = (max) => z.string().trim().max(max).regex(/^[!-~]*$/, "Must not contain spaces").optional();
+const gatewayCredentials = z
+  .object({ keyId: credentialText(200), secret: credentialText(300), webhookSecret: credentialText(300), clearWebhookSecret: z.boolean().optional() })
+  .strict()
+  .optional();
+const gatewaySave = z
+  .object({
+    isEnabled: z.boolean().optional(),
+    mode: z.enum(["test", "live"]).optional(),
+    isDefault: z.boolean().optional(),
+    currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/, "Use a 3-letter currency code").optional(),
+    exchangeRate: z.coerce.number().positive("Enter a rate above 0").max(100000).optional(),
+    test: gatewayCredentials,
+    live: gatewayCredentials,
+  })
+  .strict();
+const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
+const paymentList = listQuery.extend({
+  provider: z.enum(["razorpay", "paypal", "mock", "offline"]).optional(),
+  status: z.enum(["created", "captured", "failed", "refunded", "partially_refunded"]).optional(),
+  from: dateOnly.optional(),
+  to: dateOnly.optional(),
+});
 const refundRequest = z.object({ orderId: uuid, orderItemId: uuid.optional().nullable(), amountPaise: paise.refine((v) => v > 0, "Enter an amount"), reason: z.string().trim().min(3).max(500), ticketId: uuid.optional().nullable() });
 const refundDecision = z.object({ approve: z.boolean(), note: optionalText(500) });
 const complaintDecision = z.object({ decision: z.enum(["reprint", "replace", "refund", "reject"]), liability: z.enum(["vendor", "courier", "platform", "customer"]), note: optionalText(1000), refundPaise: paise.optional() });
+// Email (SMTP) settings. The password is write-only: empty keeps the stored one.
+const mailSettings = z
+  .object({
+    enabled: z.boolean(),
+    host: z.string().trim().max(200).regex(/^[A-Za-z0-9.-]*$/, "Enter a host name such as smtp.example.com").default(""),
+    port: z.coerce.number().int().min(1).max(65535),
+    encryption: z.enum(["none", "starttls", "ssl"]),
+    username: z.string().trim().max(200).default(""),
+    password: z.string().max(300).optional(),
+    clearPassword: z.boolean().optional(),
+    fromName: z.string().trim().max(120).default(""),
+    fromEmail: z.union([z.literal(""), z.string().trim().email("Enter a valid From address").max(190)]),
+    replyTo: z.union([z.literal(""), z.string().trim().email("Enter a valid reply-to address").max(190)]).default(""),
+  })
+  .strict();
+const mailTest = z.object({ to: z.string().trim().email("Enter a valid email address").max(190) });
+const companyVerification = z.object({ decision: z.enum(["verified", "rejected"]), note: optionalText(500) });
+const companyList = listQuery.extend({ verification: z.enum(["pending", "verified", "rejected"]).optional() });
+const ticketAssign = z.object({ assigneeId: uuid.nullable(), note: optionalText(300) });
 const ticketUpdate = z.object({ status: z.enum(["open", "in_progress", "awaiting_customer", "resolved", "closed"]).optional(), priority: z.enum(["low", "normal", "high", "urgent"]).optional(), assignedTo: uuid.optional().nullable() });
 
 const category = z.object({
@@ -225,7 +268,6 @@ const method = z.object({
 const stockAdjust = z.object({ change: z.coerce.number().int().refine((v) => v !== 0, "Enter a non-zero quantity"), reason: z.enum(["purchase", "adjustment", "damage", "return"]), note: optionalText(300) });
 const userStatus = z.object({ status: z.enum(["active", "suspended"]) });
 const userRoles = z.object({ roles: z.array(z.string().max(40)).min(1) });
-const staffCreate = z.object({ name: z.string().trim().min(2).max(120), email: z.string().trim().email().max(190), phone, roles: z.array(z.string().max(40)).min(1) });
 const companyTerms = z.object({
   paymentTerms: z.enum(["prepaid", "advance_50", "credit_15", "credit_30"]).optional(),
   creditApproved: z.boolean().optional(),
@@ -266,6 +308,9 @@ const reportQuery = z.object({ from: date.optional(), to: date.optional(), forma
 const reviewModerate = z.object({ status: z.enum(["approved", "rejected"]) });
 
 module.exports = {
+  gatewayCode,
+  gatewaySave,
+  paymentList,
   taxRate,
   hsnCodeRow,
   hsnList,
@@ -274,7 +319,7 @@ module.exports = {
   vendorApplication,
   vendorProfile,
   holidays,
-  staff,
+  
   listing,
   jobResponse,
   milestone,
@@ -293,6 +338,11 @@ module.exports = {
   refundDecision,
   complaintDecision,
   ticketUpdate,
+  ticketAssign,
+  companyVerification,
+  mailSettings,
+  mailTest,
+  companyList,
   category,
   product,
   productStatus,
@@ -300,7 +350,7 @@ module.exports = {
   stockAdjust,
   userStatus,
   userRoles,
-  staffCreate,
+  
   companyTerms,
   vendorDecision,
   coupon,

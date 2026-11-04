@@ -3,9 +3,7 @@
 const { Op } = require("sequelize");
 const { sequelize, Company, CompanyMember, User, BrandKit, ArtworkAsset, Order } = require("../Models");
 const ApiError = require("../Utils/ApiError");
-const { hashPassword, randomToken } = require("../Utils/crypto");
 const authService = require("./authService");
-const notificationService = require("./notificationService");
 const assetService = require("./assetService");
 const invoiceService = require("./invoiceService");
 
@@ -43,33 +41,6 @@ async function team(auth) {
     order: [["created_at", "ASC"]],
   });
   return members.map((m) => ({ id: m.id, role: m.member_role, status: m.status, user: m.user, joinedAt: m.created_at }));
-}
-
-async function invite(auth, { name, email, phone, role }) {
-  return sequelize.transaction(async (transaction) => {
-    const normalised = email.toLowerCase();
-    let user = await User.findOne({ where: sequelize.where(sequelize.fn("lower", sequelize.col("email")), normalised), transaction });
-    if (user) {
-      const membership = await CompanyMember.findOne({ where: { user_id: user.id }, transaction });
-      if (membership) throw ApiError.conflict("This person already belongs to a company account", "ALREADY_MEMBER");
-      if (user.account_type !== "business") throw ApiError.conflict("This email is registered as a different account type", "ACCOUNT_TYPE_MISMATCH");
-    } else {
-      // The invitee sets their own password through "Forgot password" and then verifies by OTP.
-      user = await User.create(
-        { name, email: normalised, phone, password_hash: await hashPassword(randomToken(24)), account_type: "business", status: "pending" },
-        { transaction }
-      );
-    }
-    const member = await CompanyMember.create({ company_id: auth.companyId, user_id: user.id, member_role: role, status: user.status === "active" ? "active" : "invited" }, { transaction });
-    if (user.status === "active") await authService.assignRole(user.id, ROLE_FOR_MEMBER[role], "company", auth.companyId, transaction);
-    const company = await Company.findByPk(auth.companyId, { transaction });
-    await notificationService.notify(
-      user.id,
-      { type: "team_invite", title: `You have been added to ${company.name}`, body: `${auth.user.name} added you as ${role}. Use "Forgot password" with this email to set your password, then sign in.`, link: "/forgot-password" },
-      { transaction }
-    );
-    return member;
-  });
 }
 
 async function updateMember(auth, memberId, { role, remove }) {
@@ -206,4 +177,4 @@ function parseRecipientsCsv(text) {
   return { recipients, sizeBreakdown, count: recipients.length, cities };
 }
 
-module.exports = { profile, update, team, invite, updateMember, brandKits, saveBrandKit, deleteBrandKit, invoices, purchaseOrders, parseRecipientsCsv };
+module.exports = { profile, update, team,  updateMember, brandKits, saveBrandKit, deleteBrandKit, invoices, purchaseOrders, parseRecipientsCsv };

@@ -1,14 +1,14 @@
 // Payment flow (Section 9.2): order -> payment intent -> gateway checkout ->
 // signature-verified callback or webhook -> capture (idempotent) -> production unlocked.
 const { Op } = require("sequelize");
-const { sequelize, Order, Payment, PaymentWebhookEvent } = require("../Models");
+const { sequelize, Order, Payment, PaymentWebhookEvent, User } = require("../Models");
 const ApiError = require("../Utils/ApiError");
-const { config } = require("../Config/env");
-const providers = require("./paymentProviders");
+const gatewayService = require("./gatewayService");
+const gatewayCheckout = require("./gatewayCheckout");
 const orderService = require("./orderService");
 const notificationService = require("./notificationService");
 
-async function createIntent(auth, orderId) {
+async function createIntent(auth, orderId, { gateway } = {}) {
   return sequelize.transaction(async (transaction) => {
     const order = await Order.findByPk(orderId, { transaction, lock: transaction.LOCK.UPDATE });
     if (!order || order.user_id !== auth.user.id) throw ApiError.notFound("Order not found");
@@ -18,38 +18,18 @@ async function createIntent(auth, orderId) {
     const due = await orderService.amountDue(order);
     if (due.amountPaise <= 0) throw ApiError.conflict("Nothing is due on this order", "NOTHING_DUE");
 
-    const provider = providers.current();
-    // Reuse an open intent for the same amount instead of creating duplicates.
-    let payment = await Payment.findOne({
-      where: { order_id: order.id, status: "created", provider: provider.name, amount_paise: due.amountPaise, purpose: due.purpose },
+    // Reuses an open intent for the same gateway, mode and amount instead of creating duplicates.
+    const intent = await gatewayCheckout.openPayment(ledger, {
+      orderId: order.id,
+      orderNumber: order.order_number,
+      amountPaise: due.amountPaise,
+      gatewayCode: gateway,
+      auth,
+      notes: { order_id: order.id },
+      fields: { purpose: due.purpose },
       transaction,
     });
-    if (!payment) {
-      const created = await provider.createOrder({ amountPaise: due.amountPaise, receipt: order.order_number, notes: { order_id: order.id } });
-      payment = await Payment.create(
-        {
-          order_id: order.id,
-          provider: provider.name,
-          purpose: due.purpose,
-          provider_order_id: created.providerOrderId,
-          amount_paise: due.amountPaise,
-          status: "created",
-          created_by: auth.user.id,
-        },
-        { transaction }
-      );
-    }
-    return {
-      paymentId: payment.id,
-      provider: provider.name,
-      providerOrderId: payment.provider_order_id,
-      amountPaise: payment.amount_paise,
-      purpose: payment.purpose,
-      currency: "INR",
-      orderNumber: order.order_number,
-      prefill: { name: auth.user.name, email: auth.user.email, contact: auth.user.phone },
-      ...provider.checkoutOptions(),
-    };
+    return { ...intent, purpose: due.purpose };
   });
 }
 
@@ -112,26 +92,35 @@ async function fail(paymentId, reason) {
   return payment;
 }
 
-// Razorpay checkout handler result, posted by the browser. Trust only the signature.
-async function verifyCheckout(auth, { paymentId, providerOrderId, providerPaymentId, signature }) {
+// Shop orders' ledger for the shared gateway checkout (gatewayCheckout).
+const ledger = { name: "shop", Model: Payment, capture: (...args) => capture(...args), fail: (...args) => fail(...args) };
+
+async function ownPayment(auth, paymentId) {
   const payment = await Payment.findByPk(paymentId, { include: [{ model: Order, as: "order" }] });
   if (!payment || payment.order.user_id !== auth.user.id) throw ApiError.notFound("Payment not found");
-  if (payment.provider !== "razorpay") throw ApiError.badRequest("Wrong payment provider", undefined, "PROVIDER_MISMATCH");
-  if (payment.provider_order_id !== providerOrderId) throw ApiError.badRequest("Payment does not match this order", undefined, "PAYMENT_MISMATCH");
-  const valid = providers.providers.razorpay.verifyCheckoutSignature({ providerOrderId, providerPaymentId, signature });
-  if (!valid) {
-    await fail(payment.id, "Signature verification failed");
-    throw ApiError.badRequest("Payment could not be verified", undefined, "SIGNATURE_INVALID");
-  }
-  await capture(payment.id, { providerPaymentId, actorId: auth.user.id, signatureVerified: true, raw: { providerOrderId } });
+  return payment;
+}
+
+// Razorpay checkout handler result, posted by the browser. Confirmed with Razorpay before it counts.
+async function verifyCheckout(auth, { paymentId, providerOrderId, providerPaymentId, signature }) {
+  const payment = await ownPayment(auth, paymentId);
+  await gatewayCheckout.verifyRazorpay(ledger, payment, { providerOrderId, providerPaymentId, signature, actorId: auth.user.id });
   return orderService.detail(auth, payment.order_id);
+}
+
+// PayPal onApprove: the server captures the order with PayPal and checks the result.
+async function capturePaypal(auth, { paymentId, providerOrderId }) {
+  const payment = await ownPayment(auth, paymentId);
+  if (payment.provider_order_id !== providerOrderId) throw ApiError.badRequest("Payment does not match this order", undefined, "PAYMENT_MISMATCH");
+  const result = await gatewayCheckout.settlePaypal(ledger, payment, { actorId: auth.user.id });
+  return { pending: Boolean(result.pending), order: await orderService.detail(auth, payment.order_id) };
 }
 
 // Development-only simulated gateway: completes or fails a mock payment server-side.
 async function completeMock(auth, paymentId, outcome) {
-  if (config.isProduction || config.payments.provider !== "mock") throw ApiError.forbidden("Mock payments are disabled");
-  const payment = await Payment.findByPk(paymentId, { include: [{ model: Order, as: "order" }] });
-  if (!payment || payment.order.user_id !== auth.user.id || payment.provider !== "mock") throw ApiError.notFound("Payment not found");
+  if (!gatewayService.mockEnabled()) throw ApiError.forbidden("Mock payments are disabled");
+  const payment = await ownPayment(auth, paymentId);
+  if (payment.provider !== "mock") throw ApiError.notFound("Payment not found");
   if (outcome === "failure") {
     await fail(payment.id, "Payment declined (simulated)");
     throw ApiError.unprocessable("The payment was declined. You can try again.", "PAYMENT_FAILED");
@@ -144,37 +133,6 @@ async function completeMock(auth, paymentId, outcome) {
     raw: { simulated: true },
   });
   return orderService.detail(auth, payment.order_id);
-}
-
-// Signed gateway webhook; idempotent by event id.
-async function handleRazorpayWebhook(req) {
-  const signature = req.get("x-razorpay-signature");
-  if (!providers.providers.razorpay.verifyWebhookSignature(req.rawBody, signature)) {
-    throw ApiError.unauthorized("Invalid webhook signature", "SIGNATURE_INVALID");
-  }
-  const eventId = req.get("x-razorpay-event-id") || req.body?.id || `${req.body?.event}:${req.body?.payload?.payment?.entity?.id}`;
-  const [record, created] = await PaymentWebhookEvent.findOrCreate({
-    where: { provider: "razorpay", event_id: eventId },
-    defaults: { provider: "razorpay", event_id: eventId, event_type: req.body?.event, payload: req.body },
-  });
-  if (!created && record.processed_at) return { duplicate: true };
-
-  const entity = req.body?.payload?.payment?.entity;
-  if (entity && ["payment.captured", "order.paid"].includes(req.body.event)) {
-    const payment = await Payment.findOne({ where: { provider: "razorpay", provider_order_id: entity.order_id } });
-    if (payment) {
-      await capture(payment.id, { providerPaymentId: entity.id, method: entity.method, raw: entity, signatureVerified: true });
-    } else {
-      // Not a shop order: visiting card orders use the same gateway account and webhook.
-      await require("./vcPaymentService").handleGatewayEvent(req.body.event, entity);
-    }
-  } else if (entity && req.body.event === "payment.failed") {
-    const payment = await Payment.findOne({ where: { provider: "razorpay", provider_order_id: entity.order_id, status: "created" } });
-    if (payment) await fail(payment.id, entity.error_description || "Payment failed");
-    else await require("./vcPaymentService").handleGatewayEvent(req.body.event, entity);
-  }
-  await record.update({ processed_at: new Date() });
-  return { processed: true };
 }
 
 // Finance records an offline payment (bank transfer against a PO / credit invoice).
@@ -198,18 +156,62 @@ async function recordOffline(auth, orderId, { amountPaise, reference, note }) {
   return payment.reload();
 }
 
-async function list({ page = 1, limit = 20, status, provider }) {
+const CUSTOMER = { model: User, as: "customer", attributes: ["id", "name", "email", "phone"] };
+
+/** Admin transaction history: search (order, gateway ids, customer), gateway, status, date range. */
+async function list({ page = 1, limit = 20, status, provider, q, from, to }) {
   const where = {};
   if (status) where.status = status;
   if (provider) where.provider = provider;
+  if (from || to) {
+    where.created_at = {};
+    if (from) where.created_at[Op.gte] = new Date(`${from}T00:00:00+05:30`);
+    if (to) where.created_at[Op.lt] = new Date(new Date(`${to}T00:00:00+05:30`).getTime() + 24 * 3600 * 1000);
+  }
+  if (q) {
+    const term = `%${q.replace(/[%_\\]/g, "\\$&")}%`;
+    where[Op.or] = [
+      { provider_payment_id: { [Op.iLike]: term } },
+      { provider_order_id: { [Op.iLike]: term } },
+      { "$order.order_number$": { [Op.iLike]: term } },
+      { "$order.customer.name$": { [Op.iLike]: term } },
+      { "$order.customer.email$": { [Op.iLike]: term } },
+    ];
+  }
   const { rows, count } = await Payment.findAndCountAll({
     where,
-    include: [{ model: Order, as: "order", attributes: ["id", "order_number", "user_id", "total_paise", "channel"] }],
+    attributes: { exclude: ["raw"] },
+    include: [{ model: Order, as: "order", attributes: ["id", "order_number", "user_id", "total_paise", "channel"], include: [CUSTOMER] }],
     order: [["created_at", "DESC"]],
     limit,
     offset: (page - 1) * limit,
+    subQuery: false,
   });
   return { items: rows, total: count };
+}
+
+/** One transaction with its order, customer, the gateway's reference data and webhook history. */
+async function detail(paymentId) {
+  const payment = await Payment.findByPk(paymentId, {
+    include: [{ model: Order, as: "order", attributes: ["id", "order_number", "user_id", "total_paise", "amount_paid_paise", "payment_status", "status", "channel", "created_at"], include: [CUSTOMER] }],
+  });
+  if (!payment) throw ApiError.notFound("Payment not found");
+  const creator = payment.created_by ? await User.findByPk(payment.created_by, { attributes: ["id", "name"] }) : null;
+  const events = payment.provider_order_id
+    ? await PaymentWebhookEvent.findAll({
+        where: {
+          provider: payment.provider,
+          [Op.or]: [
+            sequelize.where(sequelize.literal("payload::text"), { [Op.like]: `%${payment.provider_order_id}%` }),
+            ...(payment.provider_payment_id ? [sequelize.where(sequelize.literal("payload::text"), { [Op.like]: `%${payment.provider_payment_id}%` })] : []),
+          ],
+        },
+        attributes: ["id", "event_id", "event_type", "processed_at", "created_at"],
+        order: [["created_at", "ASC"]],
+        limit: 50,
+      })
+    : [];
+  return { ...payment.toJSON(), createdBy: creator, webhookEvents: events };
 }
 
 async function expireStaleIntents() {
@@ -217,4 +219,4 @@ async function expireStaleIntents() {
   await Payment.update({ status: "failed", failure_reason: "Abandoned" }, { where: { status: "created", created_at: { [Op.lt]: cutoff }, provider: { [Op.ne]: "offline" } } });
 }
 
-module.exports = { createIntent, capture, verifyCheckout, completeMock, handleRazorpayWebhook, recordOffline, list, expireStaleIntents };
+module.exports = { ledger, createIntent, capture, verifyCheckout, capturePaypal, completeMock, recordOffline, list, detail, expireStaleIntents };

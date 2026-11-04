@@ -2,7 +2,7 @@
 // Lines carry HSN, taxable value and CGST/SGST or IGST from the order's tax snapshot,
 // so later catalogue changes never alter an issued invoice.
 const { Op } = require("sequelize");
-const { Order, OrderItem, Invoice, User, Company } = require("../Models");
+const { Order, OrderItem, Invoice, User, Company, Product, Vendor } = require("../Models");
 const ApiError = require("../Utils/ApiError");
 const { nextNumber } = require("../Utils/numbering");
 const settingsService = require("./settingsService");
@@ -19,9 +19,19 @@ async function generate(orderId, { transaction } = {}) {
   const company = order.company_id ? await Company.findByPk(order.company_id, { transaction }) : null;
   const interstate = order.shipping_address.state.trim().toLowerCase() !== seller.state.trim().toLowerCase();
 
+  // The platform invoices every line (reseller model). A line sold from a vendor's own
+  // marketplace listing also names that seller and its GSTIN, so each sale can be traced.
+  const products = await Product.findAll({ where: { id: items.map((i) => i.product_id), source_type: "vendor_listing" }, attributes: ["id", "vendor_id"], transaction });
+  const vendors = await Vendor.findAll({ where: { id: products.map((p) => p.vendor_id).filter(Boolean) }, attributes: ["id", "business_name", "gstin"], transaction });
+  const sellerOf = (item) => {
+    const vendor = vendors.find((v) => v.id === products.find((p) => p.id === item.product_id)?.vendor_id);
+    return vendor ? { name: vendor.business_name, gstin: vendor.gstin || null } : undefined;
+  };
+
   const lines = items.map((item) => {
     const tax = engine.gst(item.taxable_paise, Number(item.gst_rate), interstate);
     return {
+      soldBy: sellerOf(item),
       lineNo: item.line_no,
       description: `${item.product_snapshot.name}${item.product_snapshot.attributes ? ` (${Object.values(item.product_snapshot.attributes).filter((v) => String(v).length < 25).join(", ")})` : ""}`,
       sku: item.product_snapshot.sku,

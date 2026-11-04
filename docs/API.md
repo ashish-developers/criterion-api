@@ -78,12 +78,17 @@ Auth endpoints are rate limited per IP and also per email or challenge.
 
 ## Payments
 
-`POST /orders/:id/payments` creates a gateway order for the amount currently due: the full amount, the 50% advance, or the balance.
+Gateways are managed in the admin panel (Settings → Payment gateway settings, `settings.manage`), not in `.env`: Razorpay and PayPal can each be enabled, put in test or live mode, given credentials per mode, and one can be the default. See [PAYMENTS.md](PAYMENTS.md) for setup, webhooks and testing.
 
-| Provider | How payment completes |
+`GET /payments/gateways` lists what the checkout may offer (`{ available, defaultGateway, gateways: [{ code, name, mode, currency, exchangeRate }] }`; no credentials). `POST /orders/:id/payments` with `{ gateway? }` opens a payment with that gateway (or the default) for the amount currently due: the full amount, the 50% advance, or the balance. A disabled or incomplete gateway is refused (`409 GATEWAY_UNAVAILABLE`); with none enabled, `409 PAYMENTS_UNAVAILABLE`. An open payment for the same gateway, mode and amount is reused.
+
+| Gateway | How payment completes |
 |---|---|
-| `razorpay` | The client opens Razorpay Checkout, then calls `POST /payments/verify` with the signature. `POST /webhooks/razorpay` (verified with `RAZORPAY_WEBHOOK_SECRET`, idempotent per event id) settles payments even if the browser never returns |
-| `mock` (development only) | `POST /payments/:id/mock-complete` with `{ outcome: "success" \| "failure" }` follows the same server path. The server refuses to start with mock payments when `APP_ENV=production` |
+| `razorpay` | The client opens Razorpay Checkout with the returned `keyId` and `providerOrderId`, then calls `POST /payments/verify` with the signature. The server checks the signature with the key secret of the mode the payment was created in, fetches the payment from Razorpay and checks its order, amount, currency and status (capturing it if only authorized) before recording it |
+| `paypal` | The client renders PayPal Buttons for the returned `providerOrderId` (created by the server with the Orders v2 API) and, on approval, calls `POST /payments/paypal/capture` with `{ paymentId, providerOrderId }`. The server captures the order with PayPal and checks the capture's status, amount, currency and `custom_id`. `{ pending: true }` means PayPal is holding the capture; the webhook finishes it. A declined funding source returns `422 PAYMENT_DECLINED` so the buyer can pick another |
+| `mock` (development only) | Offered only when `PAYMENT_PROVIDER=mock` outside production. `POST /payments/:id/mock-complete` with `{ outcome: "success" \| "failure" }` follows the same server path |
+
+Webhooks: `POST /webhooks/razorpay` (HMAC with the test or live webhook secret) and `POST /webhooks/paypal` (checked with PayPal's verify-webhook-signature API and the configured webhook ID). Both are de-duplicated by event id and never record an amount that differs from the payment. Amounts are stored in INR (`amount_paise`) plus what the gateway charged (`gateway_amount`, `gateway_currency`); PayPal charges in its configured currency at the configured rate, rounded up to the cent.
 
 Order totals, prices, GST and coupons are always recalculated on the server. The client never supplies a price.
 
@@ -280,7 +285,7 @@ Platform admins hold all of these. Production staff have `vc.view` and `vc.order
 
 Invalid moves return 409 `INVALID_TRANSITION`.
 
-**Payments.** The same flow as shop orders: `POST /visiting-cards/orders/:id/payments` returns a gateway intent (an open intent is reused), and `POST /visiting-cards/payments/verify` checks the Razorpay signature. The shared `/webhooks/razorpay` endpoint captures visiting card payments too: events are de-duplicated by event id, and gateway order and payment ids are unique in `vc_payments`. Capture locks the payment and order rows and is idempotent. A payment that lands on an already paid or cancelled order is refunded automatically. Full payment issues the GST invoice (shared `INV-` series) and a receipt (`RCT-`).
+**Payments.** The same flow as shop orders: `POST /visiting-cards/orders/:id/payments` returns a gateway intent (an open intent is reused), and `POST /visiting-cards/payments/verify` (Razorpay) or `POST /visiting-cards/payments/paypal/capture` (PayPal) confirms it with the gateway. The shared `/webhooks/razorpay` and `/webhooks/paypal` endpoints capture visiting card payments too: events are de-duplicated by event id, and gateway order and payment ids are unique in `vc_payments`. Capture locks the payment and order rows and is idempotent. A payment that lands on an already paid or cancelled order is refunded automatically. Full payment issues the GST invoice (shared `INV-` series) and a receipt (`RCT-`).
 
 **Print proofs.** These are rendered in the browser from the order snapshot: every card at actual size with crop marks, printable to PDF, and each side downloadable as a 300 dpi PNG. The API stores no rendered files.
 
@@ -366,7 +371,9 @@ These tables are generated from `src/Routes/*.js`. Paths are relative to `/api/v
 | POST | `/orders/:id/payments` | signed in · `shop.purchase` |
 | POST | `/proofs/:id/approve` | signed in |
 | POST | `/proofs/:id/request-changes` | signed in |
+| GET | `/payments/gateways` | signed in |
 | POST | `/payments/verify` | signed in · `shop.purchase` |
+| POST | `/payments/paypal/capture` | signed in · `shop.purchase` |
 | POST | `/payments/:id/mock-complete` | signed in · `shop.purchase` |
 | GET | `/products/:id/reviews` | public |
 | POST | `/reviews` | signed in · `reviews.write` |
@@ -417,7 +424,6 @@ any open status --decline (staff, reason required)--> rejected
 | GET | `/business/company` | signed in · company member · `company.view` |
 | PUT | `/business/company` | signed in · company member · `company.view` · `company.manage` |
 | GET | `/business/team` | signed in · company member · `company.view` |
-| POST | `/business/team` | signed in · company member · `company.view` · `company.team.manage` |
 | PATCH | `/business/team/:id` | signed in · company member · `company.view` · `company.team.manage` |
 | GET | `/business/brand-kits` | signed in · company member · `company.view` |
 | POST | `/business/brand-kits` | signed in · company member · `company.view` · `company.brand.manage` |
@@ -437,7 +443,6 @@ any open status --decline (staff, reason required)--> rejected
 | PUT | `/vendor/profile` | signed in · vendor member · `vendor.profile.manage` |
 | PUT | `/vendor/holidays` | signed in · approved vendor · `vendor.profile.manage` |
 | GET | `/vendor/staff` | signed in · vendor member · `vendor.team.manage` |
-| POST | `/vendor/staff` | signed in · approved vendor · `vendor.team.manage` |
 | DELETE | `/vendor/staff/:id` | signed in · approved vendor · `vendor.team.manage` |
 | GET | `/vendor/dashboard` | signed in · approved vendor · `vendor.jobs.view` |
 | GET | `/vendor/performance` | signed in · approved vendor · `vendor.jobs.view` |
@@ -495,7 +500,7 @@ any open status --decline (staff, reason required)--> rejected
 | POST | `/admin/orders/:id/cancel` | signed in · `orders.manage` |
 | POST | `/admin/orders/:id/confirm` | signed in · `orders.manage` · `{ note?, estimatedDelivery? }` confirms a sales order from a quotation |
 | POST | `/admin/orders/:id/close` | signed in · `orders.manage` · `{ note? }` issues the final invoice and completes a delivered, paid order |
-| POST | `/admin/orders/:id/payments` | signed in · `payments.view` and `refunds.approve` (both): records an offline payment |
+| POST | `/admin/orders/:id/payments` | signed in · `payments.view` or `refunds.approve`: records an offline payment |
 | POST | `/admin/order-items/:id/transition` | signed in · `orders.manage` |
 | GET | `/admin/order-items/:id/sources` | signed in · `production.manage` |
 | POST | `/admin/order-items/:id/assign` | signed in · `production.manage` |
@@ -511,7 +516,14 @@ any open status --decline (staff, reason required)--> rejected
 | POST | `/admin/shipments` | signed in · `shipping.manage` |
 | GET | `/admin/shipments` | signed in · `shipping.manage` |
 | POST | `/admin/shipments/:id/tracking` | signed in · `shipping.manage` |
-| GET | `/admin/payments` | signed in · `payments.view` |
+| GET | `/admin/payments` (`q`, `provider`, `status`, `from`, `to`) | signed in · `payments.view` |
+| GET | `/admin/payments/:id` | signed in · `payments.view` |
+| GET | `/admin/mail-settings` | signed in · `settings.manage`: SMTP server, account and sender; the password only as set / last four |
+| PUT | `/admin/mail-settings` | signed in · `settings.manage`: an empty password keeps the saved one; switching on needs host and From address |
+| POST | `/admin/mail-settings/test` (`{ to }`) | signed in · `settings.manage`: sends a test email with the saved settings and records the result |
+| GET | `/admin/payment-gateways` | signed in · `settings.manage` |
+| PUT | `/admin/payment-gateways/:code` | signed in · `settings.manage` |
+| POST | `/admin/payment-gateways/:code/test` | signed in · `settings.manage` |
 | GET | `/admin/refunds` | signed in · `refunds.request` / `refunds.approve` |
 | POST | `/admin/refunds` | signed in · `refunds.request` / `refunds.approve` |
 | POST | `/admin/refunds/:id/decision` | signed in · `refunds.approve` |
@@ -522,11 +534,11 @@ any open status --decline (staff, reason required)--> rejected
 | POST | `/admin/settlements/:id/status` | signed in · `settlements.manage` |
 | GET | `/admin/quotes` | signed in · `quotes.view` |
 | GET | `/admin/users` | signed in · `customers.view` |
-| POST | `/admin/users/staff` | signed in · `roles.manage` |
 | POST | `/admin/users/:id/status` | signed in · `customers.manage` |
 | PUT | `/admin/users/:id/roles` | signed in · `roles.manage` |
-| GET | `/admin/companies` | signed in · `customers.view` |
+| GET | `/admin/companies` (`q`, `verification` = `pending` \| `verified` \| `rejected`) | signed in · `customers.view` |
 | GET | `/admin/companies/:id` | signed in · `customers.view` |
+| POST | `/admin/companies/:id/verification` (`{ decision: "verified" \| "rejected", note? }`; a reason is required to reject) | signed in · `customers.manage`. Self-registered companies start `pending` and cannot check out or accept quotations (`403 COMPANY_UNVERIFIED`) until verified; their admins are notified of the decision |
 | PUT | `/admin/companies/:id/terms` | signed in · `customers.manage` |
 | GET | `/admin/vendors` | signed in · `vendors.view` / `production.manage` |
 | GET | `/admin/vendors/:id` | signed in · `vendors.view` |
@@ -534,8 +546,10 @@ any open status --decline (staff, reason required)--> rejected
 | GET | `/admin/coupons` | signed in · `coupons.manage` |
 | POST | `/admin/coupons` | signed in · `coupons.manage` |
 | PUT | `/admin/coupons/:id` | signed in · `coupons.manage` |
-| GET | `/admin/tickets` | signed in · `tickets.manage` |
-| PATCH | `/admin/tickets/:id` | signed in · `tickets.manage` |
+| GET | `/admin/tickets` (`assignedTo` = `me` \| `unassigned` \| user id, `status`, `priority`, `type`, `q`, `from`, `to`) | signed in · `tickets.manage` or `tickets.assign`. Without `tickets.view_all`/`tickets.assign`: own and unassigned tickets only |
+| GET | `/admin/tickets/assignees` | signed in · `tickets.manage` or `tickets.assign`: active support team members with open ticket counts |
+| POST | `/admin/tickets/:id/assign` (`{ assigneeId \| null, note? }`) | signed in · `tickets.assign`: assign, reassign or unassign; `tickets.manage` alone: pick up an unassigned ticket for yourself. Recorded in the assignment history and timeline; the new and previous assignee are notified |
+| PATCH | `/admin/tickets/:id` | signed in · `tickets.manage`; `assignedTo` goes through the same rules as `/assign` |
 | POST | `/admin/tickets/:id/resolve` | signed in · `tickets.manage` |
 | GET | `/admin/reviews` | signed in · `reviews.moderate` |
 | POST | `/admin/reviews/:id/moderate` | signed in · `reviews.moderate` |
@@ -608,6 +622,7 @@ All need a signed-in buyer (`shop.purchase`). Designs and orders are checked for
 | POST | `/visiting-cards/orders/:id/payments` | buyer · owner |
 | GET | `/visiting-cards/orders/:id/invoice` | buyer · owner · paid |
 | POST | `/visiting-cards/payments/verify` | buyer · owner |
+| POST | `/visiting-cards/payments/paypal/capture` | buyer · owner |
 | POST | `/visiting-cards/payments/:id/mock-complete` | buyer · owner · `PAYMENT_PROVIDER=mock` only |
 | GET | `/visiting-cards/payments/:id/receipt` | buyer · owner |
 
@@ -653,5 +668,6 @@ All need a signed-in buyer (`shop.purchase`). Designs and orders are checked for
 
 | Method | Path | Access |
 |---|---|---|
-| POST | `/webhooks/razorpay` | public |
+| POST | `/webhooks/razorpay` | public · signature |
+| POST | `/webhooks/paypal` | public · verified with PayPal |
 | POST | `/webhooks/shipping` | public |

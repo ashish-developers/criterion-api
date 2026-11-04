@@ -51,7 +51,9 @@ const PERMISSIONS = {
   "settings.manage": ["settings", "Manage platform settings"],
   "roles.manage": ["settings", "Manage roles and permissions"],
   "audit.view": ["settings", "View the audit log"],
-  "tickets.manage": ["support", "Manage all support tickets"],
+  "tickets.manage": ["support", "Work on support tickets: reply, change status and priority, pick up unassigned tickets"],
+  "tickets.assign": ["support", "Assign and reassign support tickets to any support team member"],
+  "tickets.view_all": ["support", "See every support ticket, including those assigned to other team members"],
   "cms.manage": ["settings", "Manage CMS pages, policies and FAQs"],
   "reviews.moderate": ["catalogue", "Moderate product reviews"],
 

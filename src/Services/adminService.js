@@ -135,6 +135,20 @@ async function productForEdit(id) {
 
 /** Saves a product with its variants, print areas, methods, tiers and sources in one transaction. */
 async function saveProduct(auth, data, id) {
+  // Repeats inside the form would otherwise only surface as a database unique-key error.
+  const repeated = (values) => values.find((v, i) => values.indexOf(v) !== i);
+  const sku = repeated(data.variants.map((v) => v.sku.trim().toUpperCase()));
+  if (sku) throw ApiError.unprocessable(`SKU ${sku} is used on more than one variant. Give each variant its own SKU.`, "SKU_REPEATED", { variants: `SKU ${sku} is repeated` });
+  if (repeated((data.methods || []).map((m) => m.methodId)) !== undefined) {
+    throw ApiError.unprocessable("A personalisation method is added more than once. Keep one row per method.", "METHOD_REPEATED", { methods: "Method repeated" });
+  }
+  const area = repeated((data.printAreas || []).map((a) => a.code));
+  if (area) throw ApiError.unprocessable(`Print area code "${area}" is used more than once.`, "PRINT_AREA_REPEATED", { printAreas: `Code ${area} is repeated` });
+  const tier = repeated((data.priceTiers || []).map((t) => t.minQty));
+  if (tier !== undefined) throw ApiError.unprocessable(`Two price tiers start at ${tier} units.`, "PRICE_TIER_REPEATED", { priceTiers: `Minimum ${tier} is repeated` });
+  if (repeated((data.sources || []).map((s) => `${s.source}:${s.source === "vendor" ? s.vendorId : ""}`))) {
+    throw ApiError.unprocessable("The same fulfilment source is listed twice (in-house, or the same vendor).", "SOURCE_REPEATED", { sources: "Source repeated" });
+  }
   return sequelize.transaction(async (transaction) => {
     const fields = {
       category_id: data.categoryId,
@@ -376,18 +390,9 @@ async function setUserRoles(auth, userId, roleCodes) {
   });
 }
 
-async function createStaff(auth, { name, email, phone, roleCodes }) {
-  const { hashPassword, randomToken } = require("../Utils/crypto");
-  const exists = await User.findOne({ where: sequelize.where(sequelize.fn("lower", sequelize.col("email")), email.toLowerCase()) });
-  if (exists) throw ApiError.conflict("An account with this email already exists", "EMAIL_TAKEN");
-  const user = await User.create({ name, email: email.toLowerCase(), phone, password_hash: await hashPassword(randomToken(24)), account_type: "staff", status: "active", email_verified_at: null });
-  await setUserRoles({ user: { id: "00000000-0000-0000-0000-000000000000" } }, user.id, roleCodes);
-  await notificationService.notify(user.id, { type: "staff_invite", title: "Your staff account is ready", body: 'Use "Forgot password" with this email to set your password.', link: "/forgot-password" });
-  return user;
-}
-
-async function listCompanies({ q, page = 1, limit = 20 }) {
+async function listCompanies({ q, verification, page = 1, limit = 20 }) {
   const where = q ? { [Op.or]: [{ name: { [Op.iLike]: `%${q}%` } }, { gstin: { [Op.iLike]: `%${q}%` } }] } : {};
+  if (verification) where.verification_status = verification;
   const { rows, count } = await Company.findAndCountAll({ where, order: [["created_at", "DESC"]], limit, offset: (page - 1) * limit });
   const ids = rows.map((c) => c.id);
   const [stats] = ids.length
@@ -408,6 +413,32 @@ async function companyDetail(id) {
   if (!company) throw ApiError.notFound("Company not found");
   const orders = await Order.findAll({ where: { company_id: id }, order: [["placed_at", "DESC"]], limit: 20, attributes: ["id", "order_number", "status", "total_paise", "amount_paid_paise", "placed_at", "payment_terms"] });
   return { ...company.toJSON(), orders };
+}
+
+/**
+ * Verifies (or rejects) a self-registered company. Verified companies can place orders and
+ * accept quotations; a rejected one can be verified later. The company's admins are notified.
+ */
+async function verifyCompany(auth, id, { decision, note }) {
+  const company = await Company.findByPk(id);
+  if (!company) throw ApiError.notFound("Company not found");
+  if (decision === "rejected" && !note) throw ApiError.unprocessable("Give a reason the customer will see", "VALIDATION_FAILED", { note: "Required when rejecting" });
+  const before = company.toJSON();
+  await company.update({ verification_status: decision, verification_note: note || null, verified_at: new Date(), verified_by: auth.user.id });
+  const [admins] = await sequelize.query(
+    `SELECT ur.user_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+      WHERE ur.scope_type = 'company' AND ur.scope_id = :id AND r.code = 'business_admin'`,
+    { replacements: { id } }
+  );
+  for (const a of admins) {
+    await notificationService.notify(a.user_id, {
+      type: decision === "verified" ? "company_verified" : "company_rejected",
+      title: decision === "verified" ? `${company.name} is verified` : `${company.name} was not approved`,
+      body: decision === "verified" ? "Your business account is approved. You can now place orders and accept quotations." : note,
+      link: "/business/dashboard",
+    });
+  }
+  return { before, after: company };
 }
 
 async function updateCompanyTerms(id, data) {
@@ -602,10 +633,10 @@ module.exports = {
   listUsers,
   setUserStatus,
   setUserRoles,
-  createStaff,
   listCompanies,
   companyDetail,
   updateCompanyTerms,
+  verifyCompany,
   listVendors,
   vendorDetail,
   decideVendor,

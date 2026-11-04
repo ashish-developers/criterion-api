@@ -93,6 +93,9 @@ const proofChanges = z.object({ comment: z.string().trim().min(3, "Describe the 
 
 const paymentVerify = z.object({ paymentId: uuid, providerOrderId: z.string().max(100), providerPaymentId: z.string().max(100), signature: z.string().max(200) });
 const mockComplete = z.object({ outcome: z.enum(["success", "failure"]) });
+// Which gateway to pay with; omitted = the admin's default. Availability is checked server-side.
+const paymentStart = z.object({ gateway: z.enum(["razorpay", "paypal", "mock"]).optional() }).strict();
+const paypalCapture = z.object({ paymentId: uuid, providerOrderId: z.string().trim().regex(/^[A-Z0-9]{5,40}$/, "Invalid PayPal order id") });
 
 const quoteItem = z.object({
   productId: uuid,
@@ -207,7 +210,14 @@ const ticketCreate = z.object({
   attachmentAssetIds: assetIds,
 });
 const ticketReply = z.object({ body: z.string().trim().min(1).max(4000), attachmentAssetIds: assetIds, internal: z.boolean().optional() });
-const ticketList = listQuery.extend({ scope: z.enum(["mine", "all"]).default("mine"), type: z.string().max(20).optional() });
+const ticketList = listQuery.extend({
+  scope: z.enum(["mine", "all"]).default("mine"),
+  type: z.string().max(20).optional(),
+  priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
+  assignedTo: z.union([z.enum(["me", "unassigned"]), uuid]).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional(),
+});
 
 const review = z.object({ productId: uuid, rating: z.coerce.number().int().min(1).max(5), title: optionalText(160), body: optionalText(2000), photoAssetIds: assetIds });
 
@@ -224,7 +234,6 @@ const companyUpdate = z.object({
   billing_address: z.object({ line1: z.string().max(200), line2: z.string().max(200).optional().nullable(), city: z.string().max(80), state: z.string().max(80), pincode }).optional(),
   approval_limit_paise: paise.optional(),
 });
-const teamInvite = z.object({ name: z.string().trim().min(2).max(120), email: z.string().trim().email().max(190), phone, role: z.enum(["admin", "approver", "buyer"]) });
 const teamUpdate = z.object({ role: z.enum(["admin", "approver", "buyer"]).optional(), remove: z.boolean().optional() });
 const brandKit = z.object({
   name: z.string().trim().min(2).max(120),
@@ -253,6 +262,8 @@ module.exports = {
   proofChanges,
   paymentVerify,
   mockComplete,
+  paymentStart,
+  paypalCapture,
   quoteCreate,
   quoteVersion,
   quoteAccept,
@@ -270,7 +281,7 @@ module.exports = {
   ticketList,
   review,
   companyUpdate,
-  teamInvite,
+  
   teamUpdate,
   brandKit,
   recipientsCsv,

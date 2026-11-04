@@ -19,9 +19,8 @@ const {
   Category,
 } = require("../Models");
 const ApiError = require("../Utils/ApiError");
-const { encrypt, hashPassword, randomToken } = require("../Utils/crypto");
+const { encrypt } = require("../Utils/crypto");
 const authService = require("./authService");
-const notificationService = require("./notificationService");
 
 function present(vendor) {
   const json = vendor.toJSON();
@@ -131,22 +130,6 @@ async function staff(auth) {
   return members.map((m) => ({ id: m.id, role: m.member_role, user: m.user }));
 }
 
-async function addStaff(auth, { name, email, phone }) {
-  return sequelize.transaction(async (transaction) => {
-    const normalised = email.toLowerCase();
-    let user = await User.findOne({ where: sequelize.where(sequelize.fn("lower", sequelize.col("email")), normalised), transaction });
-    if (user && (await VendorUser.findOne({ where: { user_id: user.id }, transaction }))) throw ApiError.conflict("This person already belongs to a vendor", "ALREADY_MEMBER");
-    if (user && user.account_type !== "vendor") throw ApiError.conflict("This email is registered as a different account type", "ACCOUNT_TYPE_MISMATCH");
-    if (!user) {
-      user = await User.create({ name, email: normalised, phone, password_hash: await hashPassword(randomToken(24)), account_type: "vendor", status: "pending" }, { transaction });
-    }
-    await VendorUser.create({ vendor_id: auth.vendorId, user_id: user.id, member_role: "staff" }, { transaction });
-    await authService.assignRole(user.id, "vendor_staff", "vendor", auth.vendorId, transaction);
-    await notificationService.notify(user.id, { type: "team_invite", title: "You have been added as vendor staff", body: 'Use "Forgot password" with this email to set your password, then sign in.', link: "/forgot-password" }, { transaction });
-    return user;
-  });
-}
-
 async function removeStaff(auth, memberId) {
   const member = await VendorUser.findOne({ where: { id: memberId, vendor_id: auth.vendorId } });
   if (!member) throw ApiError.notFound("Staff member not found");
@@ -203,6 +186,15 @@ async function saveListing(auth, data, id) {
     }
     const category = await Category.findByPk(data.categoryId, { transaction });
     if (!category) throw ApiError.unprocessable("Choose a category", "CATEGORY_INVALID");
+    // Repeats inside the form would otherwise only surface as a database unique-key error.
+    const repeated = (values) => values.find((v, i) => values.indexOf(v) !== i);
+    const sku = repeated(data.variants.map((v) => v.sku.toUpperCase()));
+    if (sku) throw ApiError.unprocessable(`SKU ${sku} is used on more than one variant. Give each variant its own SKU.`, "SKU_REPEATED", { variants: `SKU ${sku} is repeated` });
+    const method = repeated((data.methods || []).map((m) => m.code));
+    if (method) {
+      const name = (await DecorationMethod.findOne({ where: { code: method }, transaction }))?.name || method;
+      throw ApiError.unprocessable(`${name} is added more than once. Keep one row per personalisation method.`, "METHOD_REPEATED", { methods: `${name} is repeated` });
+    }
     const fields = {
       category_id: category.id,
       name: data.name,
@@ -322,4 +314,4 @@ async function performance(vendorId) {
   };
 }
 
-module.exports = { myVendor, apply, updateProfile, setHolidays, staff, addStaff, removeStaff, listings, saveListing, setListingActive, performance, present, saveCapabilities };
+module.exports = { myVendor, apply, updateProfile, setHolidays, staff,  removeStaff, listings, saveListing, setListingActive, performance, present, saveCapabilities };

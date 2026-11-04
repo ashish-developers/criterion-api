@@ -1,8 +1,13 @@
 // Customer support (FR-SU-01..03): a ticket per order with history and attachments,
 // change requests until proof approval, and the complaint flow:
 // photo evidence -> decision (reprint, replace, refund, reject) -> liability.
+//
+// Assignment: staff with tickets.manage work on tickets assigned to them and can pick up
+// unassigned ones; tickets.assign lets someone (the Platform Admin) assign or reassign any
+// ticket to any support team member; tickets.view_all shows tickets assigned to others.
+// Every change is kept in ticket_assignments and noted on the ticket's internal timeline.
 const { Op } = require("sequelize");
-const { sequelize, Ticket, TicketMessage, Order, OrderItem, User, Commission, Proof, ProductionJob } = require("../Models");
+const { sequelize, Ticket, TicketMessage, TicketAssignment, Order, OrderItem, User, Commission, Proof, ProductionJob } = require("../Models");
 const ApiError = require("../Utils/ApiError");
 const { nextNumber } = require("../Utils/numbering");
 const settingsService = require("./settingsService");
@@ -59,37 +64,167 @@ async function create(auth, { orderId, orderItemId, type, subject, message, atta
   });
 }
 
-async function loadVisible(auth, id) {
-  const ticket = await Ticket.findByPk(id);
+const ACTIVE = ["open", "in_progress", "awaiting_customer"];
+const PERSON = ["id", "name", "email", "avatar_url"];
+
+const isStaff = (auth) => auth.permissions.has("tickets.manage");
+const seesAll = (auth) => auth.permissions.has("tickets.view_all") || auth.permissions.has("tickets.assign");
+
+// Staff see their own tickets and the unassigned queue; tickets.view_all (or tickets.assign) shows all.
+function staffCanSee(auth, ticket) {
+  return isStaff(auth) && (seesAll(auth) || !ticket.assigned_to || ticket.assigned_to === auth.user.id);
+}
+
+async function loadVisible(auth, id, options) {
+  const ticket = await Ticket.findByPk(id, options);
   if (!ticket) throw ApiError.notFound("Ticket not found");
-  if (ticket.user_id !== auth.user.id && !auth.permissions.has("tickets.manage")) throw ApiError.notFound("Ticket not found");
+  if (ticket.user_id !== auth.user.id && !staffCanSee(auth, ticket)) throw ApiError.notFound("Ticket not found");
   return ticket;
 }
 
-async function list(auth, { scope = "mine", status, type, page = 1, limit = 20 }) {
+/**
+ * Active platform users who may work on tickets (tickets.manage through a platform role or an
+ * individual grant), with how many open tickets each holds. Pass an id to check just one.
+ */
+async function eligibleAssignees(id) {
+  const [rows] = await sequelize.query(
+    `SELECT u.id, u.name, u.email, u.avatar_url,
+            (SELECT count(*) FROM tickets t WHERE t.assigned_to = u.id AND t.status IN (:active))::int AS open_tickets
+       FROM users u
+      WHERE u.status = 'active' AND u.deleted_at IS NULL
+        ${id ? "AND u.id = :id" : ""}
+        AND EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.scope_type = 'platform')
+        AND (EXISTS (SELECT 1 FROM user_roles ur JOIN role_permissions rp ON rp.role_id = ur.role_id JOIN permissions p ON p.id = rp.permission_id
+                      WHERE ur.user_id = u.id AND ur.scope_type = 'platform' AND p.code = 'tickets.manage')
+          OR EXISTS (SELECT 1 FROM user_permissions up JOIN permissions p ON p.id = up.permission_id
+                      WHERE up.user_id = u.id AND p.code = 'tickets.manage'))
+      ORDER BY u.name`,
+    { replacements: { active: ACTIVE, id: id || null } }
+  );
+  return rows.map((r) => ({ id: r.id, name: r.name, email: r.email, avatarUrl: r.avatar_url, openTickets: r.open_tickets }));
+}
+
+/**
+ * Staff inbox and customer "my tickets". Filters: status, type, priority, assignedTo
+ * ("me", "unassigned" or a user id), q (number, subject, customer) and from/to (created date).
+ */
+async function list(auth, { scope = "mine", status, type, priority, assignedTo, q, from, to, page = 1, limit = 20 }) {
   const where = {};
+  const and = [];
   if (scope === "all") {
-    if (!auth.permissions.has("tickets.manage")) throw ApiError.forbidden();
+    if (!isStaff(auth)) throw ApiError.forbidden();
+    if (!seesAll(auth)) and.push({ [Op.or]: [{ assigned_to: auth.user.id }, { assigned_to: null }] });
   } else where.user_id = auth.user.id;
-  if (status) where.status = status;
+  if (status) where.status = status.includes(",") ? { [Op.in]: status.split(",") } : status;
   if (type) where.type = type;
+  if (priority) where.priority = priority;
+  if (assignedTo === "me") where.assigned_to = auth.user.id;
+  else if (assignedTo === "unassigned") where.assigned_to = null;
+  else if (assignedTo) {
+    if (!seesAll(auth) && assignedTo !== auth.user.id) throw ApiError.forbidden("You can only see tickets assigned to you or not yet assigned");
+    where.assigned_to = assignedTo;
+  }
+  if (from || to) {
+    where.created_at = {};
+    if (from) where.created_at[Op.gte] = new Date(`${from}T00:00:00+05:30`);
+    if (to) where.created_at[Op.lt] = new Date(new Date(`${to}T00:00:00+05:30`).getTime() + 86400 * 1000);
+  }
+  if (q) {
+    const term = `%${q.replace(/[%_\\]/g, "\\$&")}%`;
+    and.push({ [Op.or]: [{ ticket_number: { [Op.iLike]: term } }, { subject: { [Op.iLike]: term } }, { "$user.name$": { [Op.iLike]: term } }, { "$user.email$": { [Op.iLike]: term } }] });
+  }
+  if (and.length) where[Op.and] = and;
   const { rows, count } = await Ticket.findAndCountAll({
     where,
     include: [
       { model: User, as: "user", attributes: ["id", "name", "email"] },
       { model: Order, as: "order", attributes: ["id", "order_number"] },
-      { model: User, as: "assignee", attributes: ["id", "name"] },
+      { model: User, as: "assignee", attributes: PERSON },
     ],
     order: [["updated_at", "DESC"]],
     limit,
     offset: (page - 1) * limit,
+    subQuery: false,
   });
   return { items: rows, total: count };
 }
 
+/**
+ * Moves a ticket to another assignee (or none) and records it: a history row and an internal
+ * note on the timeline. Returns the people to notify once the transaction commits.
+ */
+async function applyAssignment(ticket, { to, by, note, transaction }) {
+  const from = ticket.assigned_to || null;
+  if ((to || null) === from) return null;
+  const users = await User.findAll({ where: { id: [from, to, by].filter(Boolean) }, attributes: ["id", "name"], transaction });
+  const name = (id) => users.find((u) => u.id === id)?.name || "a team member";
+  await ticket.update({ assigned_to: to || null }, { transaction });
+  await TicketAssignment.create({ ticket_id: ticket.id, from_user_id: from, to_user_id: to || null, assigned_by: by, note: note || null }, { transaction });
+  const text = !to ? `Unassigned (was ${name(from)}).` : from ? `Reassigned from ${name(from)} to ${name(to)}.` : to === by ? `${name(to)} picked up this ticket.` : `Assigned to ${name(to)}.`;
+  await TicketMessage.create({ ticket_id: ticket.id, user_id: by, body: note ? `${text} Note: ${note}` : text, is_internal: true }, { transaction });
+  return { from, to: to || null, by, byName: name(by), toName: to ? name(to) : null };
+}
+
+function notifyAssignment(ticket, change) {
+  if (!change) return Promise.resolve();
+  const link = `/admin/support/${ticket.id}`;
+  const jobs = [];
+  if (change.to && change.to !== change.by) {
+    jobs.push(notificationService.notify(change.to, { type: "ticket_assigned", title: `${ticket.ticket_number} assigned to you`, body: `${change.byName} assigned you "${ticket.subject}".`, link }));
+  }
+  if (change.from && change.from !== change.by && change.from !== change.to) {
+    jobs.push(
+      notificationService.notify(change.from, {
+        type: "ticket_reassigned",
+        title: `${ticket.ticket_number} ${change.to ? "reassigned" : "unassigned"}`,
+        body: change.to ? `${change.byName} reassigned "${ticket.subject}" to ${change.toName}.` : `${change.byName} removed you from "${ticket.subject}".`,
+        link,
+        email: false,
+      })
+    );
+  }
+  return Promise.all(jobs);
+}
+
+/**
+ * Assigns, reassigns or unassigns a ticket (assigneeId null). tickets.assign may choose any
+ * eligible team member; other staff may only pick up an unassigned ticket for themselves.
+ */
+async function assign(auth, id, { assigneeId, note }) {
+  if (!isStaff(auth) && !auth.permissions.has("tickets.assign")) throw ApiError.forbidden();
+  const result = await sequelize.transaction(async (transaction) => {
+    const ticket = await Ticket.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+    if (!ticket || !(auth.permissions.has("tickets.assign") || staffCanSee(auth, ticket))) throw ApiError.notFound("Ticket not found");
+    if (!auth.permissions.has("tickets.assign") && (assigneeId !== auth.user.id || ticket.assigned_to)) {
+      throw ApiError.forbidden("Only a support manager can assign tickets to other team members or take over an assigned ticket", "ASSIGN_FORBIDDEN");
+    }
+    if (assigneeId && !(await eligibleAssignees(assigneeId)).length) {
+      throw ApiError.unprocessable("Choose an active support team member", "ASSIGNEE_INVALID", { assigneeId: "Not an active support team member" });
+    }
+    const change = await applyAssignment(ticket, { to: assigneeId, by: auth.user.id, note, transaction });
+    return { ticket, change };
+  });
+  await notifyAssignment(result.ticket, result.change).catch((error) => console.error(`Ticket assignment notification failed: ${error.message}`));
+  const ticket = await Ticket.findByPk(id, { include: [{ model: User, as: "assignee", attributes: PERSON }] });
+  return { ticket, changed: Boolean(result.change), previous: result.change?.from ?? ticket.assigned_to };
+}
+
+async function assignmentHistory(ticketId) {
+  const rows = await TicketAssignment.findAll({
+    where: { ticket_id: ticketId },
+    include: [
+      { model: User, as: "fromUser", attributes: ["id", "name"] },
+      { model: User, as: "toUser", attributes: ["id", "name"] },
+      { model: User, as: "assignedBy", attributes: ["id", "name"] },
+    ],
+    order: [["created_at", "DESC"]],
+  });
+  return rows.map((r) => ({ id: r.id, from: r.fromUser, to: r.toUser, by: r.assignedBy, note: r.note, at: r.created_at }));
+}
+
 async function detail(auth, id) {
   const ticket = await loadVisible(auth, id);
-  const staff = auth.permissions.has("tickets.manage");
+  const staff = staffCanSee(auth, ticket);
   const messages = await TicketMessage.findAll({
     where: { ticket_id: ticket.id, ...(staff ? {} : { is_internal: false }) },
     include: [{ model: User, as: "user", attributes: ["id", "name"] }],
@@ -101,9 +236,13 @@ async function detail(auth, id) {
     User.findByPk(ticket.user_id, { attributes: ["id", "name", "email", "phone"] }),
   ]);
   const proofs = item ? await Proof.findAll({ where: { order_item_id: item.id }, order: [["version_no", "DESC"]] }) : [];
+  const assignee = staff && ticket.assigned_to ? await User.findByPk(ticket.assigned_to, { attributes: PERSON }) : null;
   return {
     ...ticket.toJSON(),
     user: staff ? user : undefined,
+    assignee,
+    assignmentHistory: staff ? await assignmentHistory(ticket.id) : undefined,
+    access: staff ? { canAssign: auth.permissions.has("tickets.assign"), canPickUp: !ticket.assigned_to } : undefined,
     order,
     item: item
       ? { id: item.id, name: item.product_snapshot.name, quantity: item.quantity, state: item.state, vendorId: staff ? item.vendor_id : undefined, fulfilmentSource: staff ? item.fulfilment_source : undefined, lineTotalPaise: item.line_total_paise }
@@ -123,13 +262,15 @@ async function detail(auth, id) {
 
 async function reply(auth, id, { body, attachmentAssetIds = [], internal = false }) {
   const ticket = await loadVisible(auth, id);
-  const staff = auth.permissions.has("tickets.manage");
+  const staff = staffCanSee(auth, ticket) && ticket.user_id !== auth.user.id;
   if (internal && !staff) throw ApiError.forbidden();
   if (attachmentAssetIds.length) await assetService.assertUsable(auth, attachmentAssetIds);
   if (["closed"].includes(ticket.status)) throw ApiError.conflict("This ticket is closed", "TICKET_CLOSED");
   const message = await TicketMessage.create({ ticket_id: ticket.id, user_id: auth.user.id, body, attachment_asset_ids: attachmentAssetIds, is_internal: Boolean(internal) });
   const nextStatus = staff ? (internal ? ticket.status : "awaiting_customer") : "open";
-  await ticket.update({ status: nextStatus, assigned_to: staff && !ticket.assigned_to ? auth.user.id : ticket.assigned_to });
+  await ticket.update({ status: nextStatus });
+  // Replying to an unassigned ticket picks it up.
+  if (staff && !ticket.assigned_to) await sequelize.transaction((transaction) => applyAssignment(ticket, { to: auth.user.id, by: auth.user.id, transaction }));
   if (staff && !internal) {
     await notificationService.notify(ticket.user_id, { type: "ticket_reply", title: `Reply on ${ticket.ticket_number}`, body, link: `/support/tickets/${ticket.id}` });
   }
@@ -137,8 +278,11 @@ async function reply(auth, id, { body, attachmentAssetIds = [], internal = false
 }
 
 async function update(auth, id, { status, priority, assignedTo }) {
+  // Assignment goes through the same checks, history and notifications as POST .../assign.
+  if (assignedTo !== undefined) await assign(auth, id, { assigneeId: assignedTo });
   const ticket = await loadVisible(auth, id);
-  await ticket.update({ status: status || ticket.status, priority: priority || ticket.priority, assigned_to: assignedTo === undefined ? ticket.assigned_to : assignedTo, resolved_at: ["resolved", "closed"].includes(status) ? new Date() : ticket.resolved_at });
+  if (!staffCanSee(auth, ticket)) throw ApiError.notFound("Ticket not found");
+  await ticket.update({ status: status || ticket.status, priority: priority || ticket.priority, resolved_at: ["resolved", "closed"].includes(status) ? new Date() : ticket.resolved_at });
   return ticket;
 }
 
@@ -150,7 +294,7 @@ async function update(auth, id, { status, priority, assignedTo }) {
 async function resolveComplaint(auth, id, { decision, liability, note, refundPaise }) {
   return sequelize.transaction(async (transaction) => {
     const ticket = await Ticket.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
-    if (!ticket) throw ApiError.notFound("Ticket not found");
+    if (!ticket || !staffCanSee(auth, ticket)) throw ApiError.notFound("Ticket not found");
     if (ticket.type !== "complaint") throw ApiError.conflict("Only complaints have a resolution decision", "NOT_A_COMPLAINT");
     if (ticket.decision) throw ApiError.conflict("This complaint has already been decided", "ALREADY_DECIDED");
     const item = await OrderItem.findByPk(ticket.order_item_id, { transaction, lock: transaction.LOCK.UPDATE });
@@ -222,10 +366,8 @@ async function resolveComplaint(auth, id, { decision, liability, note, refundPai
       await vendor.update({ quality_score: Math.max(1, Number(vendor.quality_score) - 0.1).toFixed(2) }, { transaction });
     }
 
-    await ticket.update(
-      { decision, liability, resolution_note: note, status: "resolved", resolved_at: new Date(), reprint_order_item_id: reprintItem?.id || null, assigned_to: ticket.assigned_to || auth.user.id },
-      { transaction }
-    );
+    if (!ticket.assigned_to) await applyAssignment(ticket, { to: auth.user.id, by: auth.user.id, transaction });
+    await ticket.update({ decision, liability, resolution_note: note, status: "resolved", resolved_at: new Date(), reprint_order_item_id: reprintItem?.id || null }, { transaction });
     await TicketMessage.create({ ticket_id: ticket.id, user_id: auth.user.id, body: `Decision: ${decision}. ${note || ""}`.trim() }, { transaction });
     await notificationService.notify(
       ticket.user_id,
@@ -240,4 +382,4 @@ async function countOpen() {
   return Ticket.count({ where: { status: { [Op.in]: ["open", "in_progress"] } } });
 }
 
-module.exports = { create, list, detail, reply, update, resolveComplaint, countOpen };
+module.exports = { create, list, detail, reply, update, assign, eligibleAssignees, resolveComplaint, countOpen };

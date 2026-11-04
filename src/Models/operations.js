@@ -103,6 +103,32 @@ const Payment = define("Payment", "payments", {
   raw: T.json,
   captured_at: T.time,
   created_by: T.uuid,
+  gateway_mode: T.str,
+  gateway_currency: T.str,
+  gateway_amount: T.money,
+});
+
+// Gateway settings managed in the admin panel (013_payment_gateways.sql). Secrets are encrypted.
+const PaymentGateway = define("PaymentGateway", "payment_gateways", {
+  code: { type: T.str, primaryKey: true },
+  name: T.str,
+  is_enabled: T.bool,
+  mode: T.str,
+  is_default: T.bool,
+  sort_order: T.int,
+  test_key_id: T.str,
+  live_key_id: T.str,
+  test_secret_enc: T.text,
+  live_secret_enc: T.text,
+  test_webhook_secret_enc: T.text,
+  live_webhook_secret_enc: T.text,
+  currency: T.str,
+  exchange_rate: T.decimal,
+  last_test_status: T.str,
+  last_test_message: T.str,
+  last_tested_at: T.time,
+  last_test_mode: T.str,
+  updated_by: T.uuid,
 });
 
 const PaymentWebhookEvent = define(
@@ -223,6 +249,14 @@ const Ticket = define("Ticket", "tickets", {
   resolved_at: T.time,
 });
 
+// Assignment history (014_ticket_assignments.sql); tickets.assigned_to is the current assignee.
+const TicketAssignment = define(
+  "TicketAssignment",
+  "ticket_assignments",
+  { id: T.bigPk, ticket_id: T.uuid, from_user_id: T.uuid, to_user_id: T.uuid, assigned_by: T.uuid, note: T.str },
+  { timestamps: "created" }
+);
+
 const TicketMessage = define(
   "TicketMessage",
   "ticket_messages",
@@ -302,6 +336,7 @@ module.exports = {
   ShipmentItem,
   TrackingEvent,
   Payment,
+  PaymentGateway,
   PaymentWebhookEvent,
   Refund,
   Invoice,
@@ -309,6 +344,7 @@ module.exports = {
   Commission,
   SettlementLine,
   Ticket,
+  TicketAssignment,
   TicketMessage,
   Notification,
   Review,

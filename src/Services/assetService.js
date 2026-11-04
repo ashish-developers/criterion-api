@@ -1,6 +1,7 @@
 // Artwork and file uploads (FR-ST-01) with private, access-controlled retrieval.
 const { sequelize, ArtworkAsset } = require("../Models");
 const ApiError = require("../Utils/ApiError");
+const { config } = require("../Config/env");
 const { sha256 } = require("../Utils/crypto");
 const storage = require("./storageService");
 const inspector = require("./fileInspector");
@@ -23,6 +24,24 @@ const KINDS = {
 // Served without sign-in (storefront and blog pages).
 const PUBLIC_KINDS = ["product_image", "blog_image"];
 
+// Antivirus (ClamAV), when CLAMAV_HOST is set. An infected file is refused. If the scanner is
+// down the upload goes through with a logged warning, unless CLAMAV_REQUIRED=true.
+async function antivirusScan(buffer) {
+  const av = config.antivirus;
+  if (!av.host) return;
+  try {
+    const verdict = await require("../Utils/clamav").scanBuffer(buffer, av);
+    if (!verdict.clean) {
+      console.warn(`[antivirus] upload refused: ${verdict.signature}`);
+      throw ApiError.unprocessable("This file was flagged by our virus scanner and cannot be uploaded.", "FILE_INFECTED");
+    }
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    console.error(`[antivirus] ${error.message}`);
+    if (av.required) throw new ApiError(503, "Uploads are paused while the virus scanner is unavailable. Try again shortly.", "SCANNER_UNAVAILABLE");
+  }
+}
+
 async function upload(auth, file, { kind = "artwork", companyAsset = false, brandKitId = null } = {}) {
   if (!file) throw ApiError.badRequest("Choose a file to upload", undefined, "FILE_REQUIRED");
   const def = KINDS[kind];
@@ -42,6 +61,7 @@ async function upload(auth, file, { kind = "artwork", companyAsset = false, bran
   }
   const scan = inspector.scan(file.buffer, detected.ext);
   if (!scan.clean) throw ApiError.unprocessable(scan.reason, "FILE_REJECTED_BY_SCAN");
+  await antivirusScan(file.buffer);
 
   const { width, height } = inspector.dimensions(file.buffer, detected.ext);
   const key = await storage.put(file.buffer, detected.ext);

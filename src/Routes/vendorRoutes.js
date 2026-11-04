@@ -19,7 +19,6 @@ router.put("/holidays", approved, requirePermission("vendor.profile.manage"), va
 mountUserAdmin(router, "/users", "vendor", [approved, requirePermission("vendor.team.manage")]);
 
 router.get("/staff", member, requirePermission("vendor.team.manage"), c.staff);
-router.post("/staff", approved, requirePermission("vendor.team.manage"), validate({ body: v.staff }), c.addStaff);
 router.delete("/staff/:id", approved, requirePermission("vendor.team.manage"), validate({ params: v.intIdParam }), c.removeStaff);
 
 router.get("/dashboard", approved, requirePermission("vendor.jobs.view"), c.dashboard);

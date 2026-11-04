@@ -127,7 +127,7 @@ async function register(input, req) {
           if (taken) throw ApiError.conflict("A company with this GSTIN is already registered. Ask its admin to invite you.", "GSTIN_TAKEN");
         }
         const company = await Company.create(
-          { name: input.companyName, gstin: input.gstin || null, billing_email: email, billing_phone: input.phone },
+          { name: input.companyName, gstin: input.gstin || null, billing_email: email, billing_phone: input.phone, verification_status: "pending" },
           { transaction }
         );
         await CompanyMember.create({ company_id: company.id, user_id: user.id, member_role: "admin" }, { transaction });
@@ -147,12 +147,12 @@ async function activateUser(user, transaction) {
       const role = { admin: "business_admin", approver: "business_approver", buyer: "business_buyer" }[membership.member_role];
       await assignRole(user.id, role, "company", membership.company_id, transaction);
       if (membership.status === "invited") await membership.update({ status: "active" }, { transaction });
-      // A self-registered company is now live: tell the team that reviews business accounts.
+      // A self-registered company now waits for verification: ask the team that reviews business accounts.
       if (membership.member_role === "admin") {
         const company = await Company.findByPk(membership.company_id, { transaction });
         transaction.afterCommit(() =>
           require("./productionService")
-            .notifyStaff("customers.manage", { type: "company_registered", title: `New business account: ${company.name}`, body: `${user.name} (${user.email})${company.gstin ? `, GSTIN ${company.gstin}` : ", no GSTIN"}. Review payment terms and limits.`, link: `/admin/businesses/${company.id}` })
+            .notifyStaff("customers.manage", { type: "company_registered", title: `Verify new business account: ${company.name}`, body: `${user.name} (${user.email})${company.gstin ? `, GSTIN ${company.gstin}` : ", no GSTIN"}. Verify the company so it can place orders, and review payment terms and limits.`, link: `/admin/businesses/${company.id}` })
             .catch(() => {})
         );
       }

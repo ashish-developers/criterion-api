@@ -3,6 +3,7 @@
 // refreshed whenever an admin edits role permissions.
 const { sequelize } = require("../Config/database");
 const { ROLES } = require("../Config/roles");
+const ApiError = require("../Utils/ApiError");
 
 let rolePermissionCache = null;
 
@@ -75,10 +76,13 @@ async function loadContext(userId) {
   const vendorRole = roles.find((r) => r.scopeType === "vendor");
   const portals = [...new Set(roles.map((r) => ROLES[r.code]?.portal).filter(Boolean))];
   // A company suspended by the platform blocks every member (checked in Middleware/auth.js).
+  // An unverified company may browse and request quotes but not order (assertCompanyCanOrder).
   let companySuspended = false;
+  let companyVerification = null;
   if (companyRole) {
-    const [[company]] = await sequelize.query(`SELECT status FROM companies WHERE id = :id`, { replacements: { id: companyRole.scopeId } });
+    const [[company]] = await sequelize.query(`SELECT status, verification_status FROM companies WHERE id = :id`, { replacements: { id: companyRole.scopeId } });
     companySuspended = company?.status === "suspended";
+    companyVerification = company?.verification_status || null;
   }
 
   return {
@@ -88,6 +92,7 @@ async function loadContext(userId) {
     companyId: companyRole?.scopeId || null,
     companyRole: companyRole?.code || null,
     companySuspended,
+    companyVerification,
     vendorId: vendorRole?.scopeId || null,
     vendorRole: vendorRole?.code || null,
     isStaff: roles.some((r) => r.scopeType === "platform"),
@@ -116,6 +121,7 @@ function publicContext(context) {
     permissions: [...context.permissions].sort(),
     companyId: context.companyId,
     companyRole: context.companyRole,
+    companyVerification: context.companyVerification,
     vendorId: context.vendorId,
     vendorRole: context.vendorRole,
     portals: context.portals,
@@ -124,4 +130,15 @@ function publicContext(context) {
   };
 }
 
-module.exports = { loadContext, invalidateRoleCache, userPermissions, homePath, publicContext };
+/** Business accounts can order only once the platform has verified the company. */
+function assertCompanyCanOrder(auth) {
+  if (!auth.companyId || !auth.companyVerification || auth.companyVerification === "verified") return;
+  throw ApiError.forbidden(
+    auth.companyVerification === "rejected"
+      ? "Your business account was not approved, so orders cannot be placed. Contact support."
+      : "Your business account is being verified. You can place orders once our team approves it, usually within one working day.",
+    "COMPANY_UNVERIFIED"
+  );
+}
+
+module.exports = { loadContext, invalidateRoleCache, userPermissions, homePath, publicContext, assertCompanyCanOrder };

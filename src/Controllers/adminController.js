@@ -6,6 +6,8 @@ const proofService = require("../Services/proofService");
 const productionService = require("../Services/productionService");
 const shipmentService = require("../Services/shipmentService");
 const paymentService = require("../Services/paymentService");
+const gatewayService = require("../Services/gatewayService");
+const mailSettingsService = require("../Services/mailSettingsService");
 const refundService = require("../Services/refundService");
 const settlementService = require("../Services/settlementService");
 const ticketService = require("../Services/ticketService");
@@ -145,7 +147,36 @@ module.exports = {
   tracking: async (req, res) => ok(res, await shipmentService.addTracking(req.auth, req.params.id, req.body), "Tracking updated"),
 
   // ---- Payments, refunds, settlements
-  payments: async (req, res) => listed(res, req, await paymentService.list({ ...paging(req), status: req.query.status, provider: req.query.provider })),
+  payments: async (req, res) => {
+    const { status, provider, q, from, to } = req.validatedQuery;
+    return listed(res, req, await paymentService.list({ ...paging(req), status, provider, q, from, to }));
+  },
+  payment: async (req, res) => ok(res, await paymentService.detail(req.params.id)),
+  paymentGateways: async (req, res) => ok(res, await gatewayService.list()),
+  mailSettings: async (req, res) => ok(res, await mailSettingsService.describe()),
+  saveMailSettings: async (req, res) => {
+    const before = await mailSettingsService.describe();
+    const after = await mailSettingsService.save(req.auth, req.body);
+    // The described values hold no password: only whether one is set and its last four characters.
+    await audit.record(req, "mail_settings.updated", "setting", "smtp", { before, after });
+    return ok(res, after, "Email settings saved");
+  },
+  testMailSettings: async (req, res) => {
+    const result = await mailSettingsService.test(req.auth, req.body);
+    await audit.record(req, "mail_settings.tested", "setting", "smtp", { after: { ok: result.ok, message: result.message } });
+    return ok(res, result, result.message);
+  },
+  savePaymentGateway: async (req, res) => {
+    const { before, after } = await gatewayService.save(req.auth, req.params.code, req.body);
+    // The described values hold no secrets: only whether one is set and its last four characters.
+    await audit.record(req, "payment_gateway.updated", "payment_gateway", req.params.code, { before, after });
+    return ok(res, after, `${after.name} settings saved`);
+  },
+  testPaymentGateway: async (req, res) => {
+    const result = await gatewayService.test(req.params.code);
+    await audit.record(req, "payment_gateway.tested", "payment_gateway", req.params.code, { after: { ok: result.ok, message: result.message, mode: result.gateway.mode } });
+    return ok(res, result, result.message);
+  },
   offlinePayment: async (req, res) => {
     const payment = await paymentService.recordOffline(req.auth, req.params.id, req.body);
     await audit.record(req, "payment.offline_recorded", "order", req.params.id, { after: req.body });
@@ -194,12 +225,13 @@ module.exports = {
     await audit.record(req, "user.roles", "user", req.params.id, { after: { roles } });
     return ok(res, roles, "Roles updated");
   },
-  createStaff: async (req, res) => {
-    const user = await adminService.createStaff(req.auth, { ...req.body, roleCodes: req.body.roles });
-    await audit.record(req, "user.staff_created", "user", user.id, { after: { email: user.email, roles: req.body.roles } });
-    return created(res, user, "Staff account created");
+
+  companies: async (req, res) => listed(res, req, await adminService.listCompanies({ ...req.validatedQuery, ...paging(req) })),
+  verifyCompany: async (req, res) => {
+    const { before, after } = await adminService.verifyCompany(req.auth, req.params.id, req.body);
+    await audit.record(req, `company.${req.body.decision}`, "company", req.params.id, { before: { verification: before.verification_status }, after: { verification: after.verification_status, note: req.body.note } });
+    return ok(res, after, req.body.decision === "verified" ? `${after.name} verified` : `${after.name} rejected`);
   },
-  companies: async (req, res) => listed(res, req, await adminService.listCompanies({ ...req.query, ...paging(req) })),
   company: async (req, res) => ok(res, await adminService.companyDetail(req.params.id)),
   companyTerms: async (req, res) => {
     const { before, after } = await adminService.updateCompanyTerms(req.params.id, req.body);
@@ -226,6 +258,13 @@ module.exports = {
     return listed(res, req, result);
   },
   updateTicket: async (req, res) => ok(res, await ticketService.update(req.auth, req.params.id, req.body), "Ticket updated"),
+  ticketAssignees: async (req, res) => ok(res, await ticketService.eligibleAssignees()),
+  assignTicket: async (req, res) => {
+    const result = await ticketService.assign(req.auth, req.params.id, req.body);
+    if (result.changed) await audit.record(req, "ticket.assigned", "ticket", req.params.id, { before: { assignedTo: result.previous }, after: { assignedTo: req.body.assigneeId, note: req.body.note } });
+    const name = result.ticket.assignee?.name;
+    return ok(res, result.ticket, !result.changed ? "No change" : name ? `Assigned to ${name}` : "Ticket unassigned");
+  },
   resolveComplaint: async (req, res) => {
     const result = await ticketService.resolveComplaint(req.auth, req.params.id, req.body);
     await audit.record(req, "complaint.resolved", "ticket", req.params.id, { after: req.body });

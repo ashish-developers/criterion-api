@@ -116,11 +116,15 @@ async function detail(id, { vendorId } = {}) {
   const lines = await SettlementLine.findAll({ where: { settlement_id: settlement.id } });
   const items = await OrderItem.findAll({ where: { id: lines.map((l) => l.order_item_id) }, include: [{ model: Order, as: "order", attributes: ["id", "order_number"] }] });
   const byId = new Map(items.map((i) => [i.id, i]));
+  // Why each line is payable: a sale, a job, or compensation for an accepted job the customer cancelled.
+  const kinds = new Map((await Commission.findAll({ where: { settlement_id: settlement.id }, attributes: ["order_item_id", "model"] })).map((c) => [c.order_item_id, c.model]));
   return {
     ...settlement.toJSON(),
     lines: lines.map((l) => {
       const item = byId.get(l.order_item_id);
-      return { ...l.toJSON(), orderNumber: item?.order?.order_number, product: item?.product_snapshot?.name, quantity: item?.quantity, deliveredAt: item?.delivered_at };
+      const kind = kinds.get(l.order_item_id) || null;
+      const name = item?.product_snapshot?.name;
+      return { ...l.toJSON(), kind, orderNumber: item?.order?.order_number, product: kind === "cancellation" && name ? `${name} (cancelled order: setup and materials)` : name, quantity: item?.quantity, deliveredAt: item?.delivered_at };
     }),
   };
 }

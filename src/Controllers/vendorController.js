@@ -11,7 +11,6 @@ module.exports = {
   updateProfile: async (req, res) => ok(res, await vendorService.updateProfile(req.auth, req.body), "Profile updated"),
   setHolidays: async (req, res) => ok(res, await vendorService.setHolidays(req.auth, req.body.holidays), "Holidays saved"),
   staff: async (req, res) => ok(res, await vendorService.staff(req.auth)),
-  addStaff: async (req, res) => created(res, await vendorService.addStaff(req.auth, req.body), "Staff member added"),
   removeStaff: async (req, res) => {
     await vendorService.removeStaff(req.auth, Number(req.params.id));
     return ok(res, null, "Staff member removed");

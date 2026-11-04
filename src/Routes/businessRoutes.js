@@ -15,7 +15,6 @@ router.put("/company", requirePermission("company.manage"), validate({ body: v.c
 mountUserAdmin(router, "/users", "company", [requirePermission("company.team.manage")]);
 
 router.get("/team", c.team);
-router.post("/team", requirePermission("company.team.manage"), validate({ body: v.teamInvite }), c.invite);
 router.patch("/team/:id", requirePermission("company.team.manage"), validate({ body: v.teamUpdate }), c.updateMember);
 router.get("/brand-kits", c.brandKits);
 router.post("/brand-kits", requirePermission("company.brand.manage"), validate({ body: v.brandKit }), c.createBrandKit);
