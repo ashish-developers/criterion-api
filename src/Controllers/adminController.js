@@ -153,24 +153,11 @@ module.exports = {
   },
   payment: async (req, res) => ok(res, await paymentService.detail(req.params.id)),
   paymentGateways: async (req, res) => ok(res, await gatewayService.list()),
-  mailSettings: async (req, res) => ok(res, await mailSettingsService.describe()),
-  saveMailSettings: async (req, res) => {
-    const before = await mailSettingsService.describe();
-    const after = await mailSettingsService.save(req.auth, req.body);
-    // The described values hold no password: only whether one is set and its last four characters.
-    await audit.record(req, "mail_settings.updated", "setting", "smtp", { before, after });
-    return ok(res, after, "Email settings saved");
-  },
+  mailSettings: async (req, res) => ok(res, mailSettingsService.describe()),
   testMailSettings: async (req, res) => {
     const result = await mailSettingsService.test(req.auth, req.body);
     await audit.record(req, "mail_settings.tested", "setting", "smtp", { after: { ok: result.ok, message: result.message } });
     return ok(res, result, result.message);
-  },
-  savePaymentGateway: async (req, res) => {
-    const { before, after } = await gatewayService.save(req.auth, req.params.code, req.body);
-    // The described values hold no secrets: only whether one is set and its last four characters.
-    await audit.record(req, "payment_gateway.updated", "payment_gateway", req.params.code, { before, after });
-    return ok(res, after, `${after.name} settings saved`);
   },
   testPaymentGateway: async (req, res) => {
     const result = await gatewayService.test(req.params.code);

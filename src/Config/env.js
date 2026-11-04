@@ -90,24 +90,51 @@ const config = {
     maxBulkRows: 500,
   },
 
-  mail: {
-    driver: str("MAIL_DRIVER", "log"), // log | smtp
-    host: str("MAIL_HOST", "localhost"),
-    port: int("MAIL_PORT", 1025),
-    secure: bool("MAIL_SECURE", false),
-    user: str("MAIL_USER"),
-    password: str("MAIL_PASSWORD"),
-    from: str("MAIL_FROM", "Branding Platform <no-reply@localhost>"),
-  },
+  // Outgoing email. MAIL_DRIVER=log (default) only writes a line to the console; smtp sends
+  // through MAIL_HOST. Older names (MAIL_USER, MAIL_SECURE, MAIL_FROM) are still read.
+  mail: (() => {
+    const fromAddress = str("MAIL_FROM_ADDRESS");
+    const fromName = str("MAIL_FROM_NAME", str("BRAND_NAME", "MingoKart")).replace(/["\r\n]/g, "");
+    const encryption = str("MAIL_ENCRYPTION", bool("MAIL_SECURE", false) ? "ssl" : "starttls").toLowerCase();
+    return {
+      driver: str("MAIL_DRIVER", "log"), // log | smtp
+      host: str("MAIL_HOST", "localhost"),
+      port: int("MAIL_PORT", 1025),
+      encryption, // none | starttls | ssl
+      secure: encryption === "ssl",
+      requireTLS: encryption === "starttls",
+      user: str("MAIL_USERNAME") || str("MAIL_USER"),
+      password: str("MAIL_PASSWORD"),
+      fromAddress,
+      fromName,
+      from: fromAddress ? (fromName ? `"${fromName}" <${fromAddress}>` : fromAddress) : str("MAIL_FROM", "Branding Platform <no-reply@localhost>"),
+      replyTo: str("MAIL_REPLY_TO"),
+    };
+  })(),
 
-  // Gateways (Razorpay, PayPal), modes and keys are managed in the admin panel (Payment gateway
-  // settings). PAYMENT_PROVIDER=mock adds the simulated gateway outside production; the
-  // RAZORPAY_* values are only read once, to import an older .env setup (gatewayService).
+  // Payment gateways, read from .env only (the admin page shows them read-only).
+  // PAYMENT_PROVIDER=mock adds the simulated gateway outside production.
   payments: {
-    provider: str("PAYMENT_PROVIDER", "mock"), // mock | razorpay | none
-    razorpayKeyId: str("RAZORPAY_KEY_ID"),
-    razorpayKeySecret: str("RAZORPAY_KEY_SECRET"),
-    razorpayWebhookSecret: str("RAZORPAY_WEBHOOK_SECRET"),
+    provider: str("PAYMENT_PROVIDER", "mock"),
+    defaultGateway: str("PAYMENT_DEFAULT_GATEWAY"),
+    razorpay: {
+      enabled: bool("RAZORPAY_ENABLED", Boolean(str("RAZORPAY_KEY_ID") && str("RAZORPAY_KEY_SECRET"))),
+      mode: str("RAZORPAY_MODE", str("RAZORPAY_KEY_ID").startsWith("rzp_live_") ? "live" : "test"),
+      keyId: str("RAZORPAY_KEY_ID"),
+      secret: str("RAZORPAY_KEY_SECRET"),
+      webhookSecret: str("RAZORPAY_WEBHOOK_SECRET"),
+      currency: "INR",
+      exchangeRate: 1,
+    },
+    paypal: {
+      enabled: bool("PAYPAL_ENABLED", false),
+      mode: str("PAYPAL_MODE", "test"),
+      keyId: str("PAYPAL_CLIENT_ID"),
+      secret: str("PAYPAL_CLIENT_SECRET"),
+      webhookSecret: str("PAYPAL_WEBHOOK_ID"),
+      currency: str("PAYPAL_CURRENCY", "USD").toUpperCase(),
+      exchangeRate: Number(str("PAYPAL_EXCHANGE_RATE", "85")) || 85,
+    },
   },
 
   storage: {

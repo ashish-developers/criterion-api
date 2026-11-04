@@ -32,7 +32,8 @@
     "seed:demo:remove": "node src/Seeders/seed.js --remove-demo",
     "setup": "npm run db:create && npm run db:migrate && npm run seed",
     "test": "node --test --test-concurrency=1 \"tests/*.test.js\"",
-    "admin:create": "node src/Seeders/createAdmin.js"
+    "admin:create": "node src/Seeders/createAdmin.js",
+    "config:check": "node src/Config/checkIntegrations.js"
   },
   "keywords": [],
   "author": "",

@@ -6,6 +6,16 @@ process.env.APP_ENV = "test";
 process.env.SHOW_DEV_OTP = "true";
 process.env.PAYMENT_PROVIDER = "mock";
 process.env.DISABLE_SCHEDULER = "true";
+// Never use the real mail server or gateway keys from .env in tests (set before .env loads, so
+// these win). Tests that need a gateway set config.payments.* themselves.
+process.env.MAIL_DRIVER = "log";
+for (const name of ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET", "PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET", "PAYPAL_WEBHOOK_ID", "PAYMENT_DEFAULT_GATEWAY"]) process.env[name] = "";
+process.env.RAZORPAY_ENABLED = "false";
+process.env.PAYPAL_ENABLED = "false";
+process.env.RAZORPAY_MODE = "test";
+process.env.PAYPAL_MODE = "test";
+process.env.PAYPAL_CURRENCY = "USD";
+process.env.PAYPAL_EXCHANGE_RATE = "85";
 require("dotenv").config({ quiet: true });
 process.env.DB_NAME = process.env.TEST_DB_NAME || `${(process.env.DB_NAME || "branding").trim()}_test`;
 

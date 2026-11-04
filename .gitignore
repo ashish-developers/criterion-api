@@ -2,3 +2,5 @@
 .env
 /storage/uploads
 /tests
+.env.*
+!.env.example

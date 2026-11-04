@@ -117,12 +117,10 @@ router.post("/reviews/:id/moderate", can("reviews.moderate"), id, validate({ bod
 // Payment gateways (Razorpay, PayPal): enable, mode, credentials, connection test
 const gateway = validate({ params: v.gatewayCode });
 router.get("/payment-gateways", can("settings.manage"), c.paymentGateways);
-router.put("/payment-gateways/:code", can("settings.manage"), gateway, validate({ body: v.gatewaySave }), c.savePaymentGateway);
 router.post("/payment-gateways/:code/test", can("settings.manage"), gateway, rateLimit({ name: "gateway-test", windowMs: 60 * 1000, max: 10, by: (req) => req.auth?.user?.id }), c.testPaymentGateway);
 
 // Email (SMTP) settings: server, account (password encrypted), sender, test email
 router.get("/mail-settings", can("settings.manage"), c.mailSettings);
-router.put("/mail-settings", can("settings.manage"), validate({ body: v.mailSettings }), c.saveMailSettings);
 router.post("/mail-settings/test", can("settings.manage"), rateLimit({ name: "mail-test", windowMs: 60 * 1000, max: 5, by: (req) => req.auth?.user?.id }), validate({ body: v.mailTest }), c.testMailSettings);
 
 // Settings, roles, CMS, audit

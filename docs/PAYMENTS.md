@@ -1,6 +1,6 @@
 # Payment gateways: Razorpay and PayPal
 
-Customers pay shop orders and visiting card orders through Razorpay and/or PayPal. Admins manage both gateways in **Admin → Settings → Payment gateway settings** (permission `settings.manage`). The checkout offers only the gateways that are enabled there. Nothing about gateway availability is hard-coded in the web app.
+Customers pay shop orders and visiting card orders through Razorpay and/or PayPal. Both gateways are configured in the API's `.env` file (`RAZORPAY_*`, `PAYPAL_*`, `PAYMENT_DEFAULT_GATEWAY`). **Admin → Settings → Payment gateway settings** (permission `settings.manage`) shows them read-only, lists missing values and can test the connection. The checkout offers only the gateways that are enabled and complete. Nothing about gateway availability is hard-coded in the web app.
 
 ## How it works
 
@@ -14,14 +14,14 @@ Customers pay shop orders and visiting card orders through Razorpay and/or PayPa
 Visiting card orders use the same flow under `/visiting-cards/orders/:id/payments`, `/visiting-cards/payments/verify` and `/visiting-cards/payments/paypal/capture`. Both share the same webhooks.
 
 The code is in `src/Services/`:
-- `gatewayService.js`: settings, encryption, connection tests and which gateway a payment may use.
+- `gatewayService.js`: settings from `.env`, connection tests and which gateway a payment may use.
 - `gatewayCheckout.js`: opening, verifying and capturing payments, webhooks and refunds, shared by both ledgers.
 - `paymentProviders.js`: the HTTP adapters for the Razorpay and PayPal APIs.
 
 ## Database
 
 Migration `013_payment_gateways.sql`:
-- **`payment_gateways`**: one row per gateway. It holds the enabled flag, mode (`test`/`live`), the default flag, and the public key for each mode (Razorpay Key ID, PayPal Client ID). The secrets for each mode (Razorpay key and webhook secret, PayPal client secret and webhook ID) are stored AES-256-GCM encrypted. It also holds the charge currency and exchange rate, the last connection test, and created/updated timestamps with the admin who saved them.
+- **`payment_gateways`**: one row per gateway, from when gateways were configured in the admin panel. **No longer read**: the configuration moved to `.env`. The rows (with their encrypted secrets) are kept unchanged.
 - **Transactions** stay in the existing ledgers, `payments` (shop orders) and `vc_payments` (visiting cards). No duplicate table is created. Each row has:
   - `order_id`, with the customer through the order;
   - `provider` (now also `paypal`);
@@ -38,27 +38,34 @@ Run `npm run db:migrate` to apply it.
 
 | Variable | Purpose |
 |---|---|
-| `APP_KEY` | Encrypts gateway secrets. Keep it stable once secrets are saved; if it changes, re-enter the secrets |
-| `PAYMENT_PROVIDER` | `mock` also offers a simulated gateway (development only; refused when `APP_ENV=production`). Use `none` in production |
+| `PAYMENT_PROVIDER` | `mock` also offers a simulated gateway (development only; refused when `APP_ENV=production`). Use `none` otherwise |
+| `PAYMENT_DEFAULT_GATEWAY` | `razorpay` or `paypal`: pre-selected at checkout when both are enabled |
 | `PUBLIC_API_URL` | Public base address used to build the webhook URLs shown in the admin panel, e.g. `https://your-domain` |
-| `WEB_APP_URL` | Must be `https://` before a gateway can be enabled in live mode when `APP_ENV=production` |
-| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Legacy only. At startup they are imported once into the Razorpay settings if that gateway was never saved in the admin panel. Remove them afterwards |
+| `RAZORPAY_ENABLED`, `RAZORPAY_MODE` | `true`/`false`; `test` or `live` |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | API keys for that mode (`rzp_test_…` or `rzp_live_…`) |
+| `RAZORPAY_WEBHOOK_SECRET` | The secret chosen when adding the webhook in Razorpay |
+| `PAYPAL_ENABLED`, `PAYPAL_MODE` | `true`/`false`; `test` (Sandbox) or `live` |
+| `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | Credentials of a Sandbox or Live app |
+| `PAYPAL_WEBHOOK_ID` | The Webhook ID of the webhook added in the PayPal app |
+| `PAYPAL_CURRENCY`, `PAYPAL_EXCHANGE_RATE` | Charge currency (PayPal does not take INR) and rupees per 1 unit |
 
-## Admin setup
+Restart the API after changing any of these. `npm run config:check` checks them without taking a payment: Razorpay with a read-only Orders API call, PayPal by requesting an OAuth token.
+
+## Setup
 
 1. **Razorpay.** Copy the Key ID and Key Secret from Razorpay Dashboard → Account & Settings → API Keys. Test keys start with `rzp_test_`, live keys with `rzp_live_`.
 2. **PayPal.** In the PayPal Developer Dashboard → Apps & Credentials, copy the Client ID and Client Secret of a Sandbox app (test) or a Live app. PayPal does not accept INR for these payments, so choose a charge currency (USD by default) and set **₹ per 1 unit**. Amounts are converted at that rate and rounded up to the cent. Keep the rate current: it is not updated automatically.
-3. **Save settings**, then **Test connection**. Razorpay is tested with a read-only Orders API call; PayPal by requesting an OAuth token. The card shows the status: Connected, Connection failed, Not tested, Not configured or Disabled.
+3. Put the values in `.env`, restart the API, then run `npm run config:check` or click **Test connection** on the admin page. The card shows Enabled, Disabled or Not configured (with the missing variables).
 4. **Webhooks.** Each card shows its webhook URL.
-   - **Razorpay:** Dashboard → Webhooks → add the URL, choose a secret, and select `payment.captured`, `payment.failed` and `order.paid`. Paste the secret into **Webhook secret**.
-   - **PayPal:** in the app's Webhooks → add the URL with the five events above, then paste the **Webhook ID** into the card.
+   - **Razorpay:** Dashboard → Webhooks → add the URL, choose a secret, and select `payment.captured`, `payment.failed` and `order.paid`. Put the secret in `RAZORPAY_WEBHOOK_SECRET`.
+   - **PayPal:** in the app's Webhooks → add the URL with the five events above, then put the **Webhook ID** in `PAYPAL_WEBHOOK_ID`.
    - Without these, webhooks are rejected. Browser-side confirmation still works, but a customer who closes the window after paying is only recorded once the webhook arrives.
-5. **Enable** the gateway and optionally make it the **default** (pre-selected at checkout). Disabling asks for confirmation. Payments already in progress are still confirmed by their webhooks.
-6. **Going live.** Enter the live credentials, switch the mode to Live (this asks for confirmation), save, and test. Test credentials are kept. Payments opened in test mode are still verified with the test keys.
+5. **Enable** the gateway (`RAZORPAY_ENABLED=true` / `PAYPAL_ENABLED=true`) and optionally set `PAYMENT_DEFAULT_GATEWAY`.
+6. **Going live.** Replace the keys with the live ones, set the mode to `live`, restart and test. `.env` holds one set of keys per gateway, so payments still open in test mode can no longer be confirmed (`409 GATEWAY_MODE_CHANGED`); finish or cancel them before switching.
 
 ## Security
 
-- **Secrets.** Secrets are encrypted at rest and never returned by the API. The admin form shows only "saved (••••abcd)". The browser receives only the public Key ID / Client ID. The audit log records every save and test without secrets.
+- **Secrets.** Secrets live only in the server's `.env` (git-ignored) and are never returned by the API or logged. The admin page shows only whether each is set. The browser receives only the public Key ID / Client ID.
 - **Verification.** A payment counts only after the gateway's server API confirms it: a signature plus a payment fetch for Razorpay, a server-side capture or order fetch for PayPal. Amount and currency must match the payment that was opened for the order's amount due. A mismatch is logged and the payment marked failed.
 - **No duplicate processing.**
   - Capture locks the payment and order rows and is idempotent.

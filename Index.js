@@ -29,16 +29,6 @@ async function startServer() {
     process.exit(1);
   }
 
-  // Email (SMTP) settings saved in the admin panel take over from .env MAIL_* once loaded.
-  await require("./src/Services/mailSettingsService")
-    .load()
-    .catch((error) => console.error(`[mail] Could not load the SMTP settings: ${error.message}`));
-
-  // Older installs configured Razorpay in .env; move those keys into the admin settings once.
-  await require("./src/Services/gatewayService")
-    .importLegacyEnv()
-    .catch((error) => console.error(`[payments] Could not import the Razorpay keys from .env: ${error.message}`));
-
   const app = createApp();
   // Express 5 passes listen errors (e.g. port already in use) to this callback instead of throwing.
   const server = app.listen(config.port, (error) => {

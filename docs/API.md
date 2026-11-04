@@ -82,7 +82,7 @@ Auth endpoints are rate limited per IP and also per email or challenge.
 
 ## Payments
 
-Gateways are managed in the admin panel (Settings → Payment gateway settings, `settings.manage`), not in `.env`: Razorpay and PayPal can each be enabled, put in test or live mode, given credentials per mode, and one can be the default. See [PAYMENTS.md](PAYMENTS.md) for setup, webhooks and testing.
+Gateways are configured in the API's `.env` (`RAZORPAY_*`, `PAYPAL_*`, `PAYMENT_DEFAULT_GATEWAY`) and shown read-only in the admin panel (Settings → Payment gateway settings, `settings.manage`). See [PAYMENTS.md](PAYMENTS.md) for setup, webhooks and testing.
 
 `GET /payments/gateways` lists what the checkout may offer (`{ available, defaultGateway, gateways: [{ code, name, mode, currency, exchangeRate }] }`; no credentials). `POST /orders/:id/payments` with `{ gateway? }` opens a payment with that gateway (or the default) for the amount currently due: the full amount, the 50% advance, or the balance. A disabled or incomplete gateway is refused (`409 GATEWAY_UNAVAILABLE`); with none enabled, `409 PAYMENTS_UNAVAILABLE`. An open payment for the same gateway, mode and amount is reused.
 
@@ -522,12 +522,10 @@ any open status --decline (staff, reason required)--> rejected
 | POST | `/admin/shipments/:id/tracking` | signed in · `shipping.manage` |
 | GET | `/admin/payments` (`q`, `provider`, `status`, `from`, `to`) | signed in · `payments.view` |
 | GET | `/admin/payments/:id` | signed in · `payments.view` |
-| GET | `/admin/mail-settings` | signed in · `settings.manage`: SMTP server, account and sender; the password only as set / last four |
-| PUT | `/admin/mail-settings` | signed in · `settings.manage`: an empty password keeps the saved one; switching on needs host and From address |
-| POST | `/admin/mail-settings/test` (`{ to }`) | signed in · `settings.manage`: sends a test email with the saved settings and records the result |
-| GET | `/admin/payment-gateways` | signed in · `settings.manage` |
-| PUT | `/admin/payment-gateways/:code` | signed in · `settings.manage` |
-| POST | `/admin/payment-gateways/:code/test` | signed in · `settings.manage` |
+| GET | `/admin/mail-settings` | signed in · `settings.manage`: the `.env` SMTP settings (read-only), missing variables; the password only as set / not set |
+| POST | `/admin/mail-settings/test` (`{ to }`) | signed in · `settings.manage`: sends a test email with the `.env` settings |
+| GET | `/admin/payment-gateways` | signed in · `settings.manage`: the `.env` gateway settings (read-only), missing variables; secrets only as set / not set |
+| POST | `/admin/payment-gateways/:code/test` | signed in · `settings.manage`: checks the credentials with the gateway (no payment); nothing is stored |
 | GET | `/admin/refunds` | signed in · `refunds.request` / `refunds.approve` |
 | POST | `/admin/refunds` | signed in · `refunds.request` / `refunds.approve` |
 | POST | `/admin/refunds/:id/decision` | signed in · `refunds.approve` |

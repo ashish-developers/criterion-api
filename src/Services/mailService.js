@@ -1,13 +1,12 @@
-// Email delivery abstraction. The SMTP server comes from the admin panel (Settings -> Email
-// (SMTP), mailSettingsService) when switched on there, else from .env: MAIL_DRIVER=log (default)
-// writes a redacted line to the console; MAIL_DRIVER=smtp sends through any SMTP server
-// (Mailpit, SES SMTP, etc.). To use a provider API instead, add a driver with the same
+// Email delivery abstraction, configured in .env (MAIL_*, read by mailSettingsService):
+// MAIL_DRIVER=log (default) writes a redacted line to the console; MAIL_DRIVER=smtp sends
+// through any SMTP server (Gmail, Mailpit, SES SMTP, etc.). To use a provider API instead, add a driver with the same
 // send({to, subject, text, html}) shape.
 const { config } = require("../Config/env");
 
 const settings = () => require("./mailSettingsService").effective();
 
-// One transporter per SMTP configuration; a saved change gets a fresh one.
+// One transporter per SMTP configuration.
 let transporter = null;
 let transporterKey = null;
 
@@ -65,4 +64,4 @@ function reset() {
   transporterKey = null;
 }
 
-module.exports = { send, sendWith, isConfigured, reset };
+module.exports = { send, sendWith, isConfigured, reset, transportFor };
