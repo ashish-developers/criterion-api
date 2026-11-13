@@ -245,7 +245,29 @@ const recipientsCsv = z.object({ csv: z.string().min(10).max(2_000_000) });
 
 const uploadQuery = z.object({ kind: z.string().max(30).default("artwork"), companyAsset: z.enum(["true", "false"]).optional(), brandKitId: uuid.optional() });
 
+
+const contactSubmit = z.object({
+  name: z.string().trim().min(2, "Enter your name").max(120),
+  email: z.string().trim().toLowerCase().email("Enter a valid email address").max(190),
+  phone: z.string().trim().max(30).optional().nullable(),
+  subject: z.string().trim().min(2, "Enter a subject").max(200),
+  message: z.string().trim().min(3, "Enter your message").max(4000),
+});
+
+const enquirySubmit = z.object({
+  name: z.string().trim().min(2, "Enter your name").max(120),
+  company: z.string().trim().min(2, "Enter your company name").max(150),
+  email: z.string().trim().toLowerCase().email("Enter a valid email address").max(190),
+  phone: z.string().trim().min(6, "Enter your phone number").max(30),
+  category: z.string().trim().max(100).optional().nullable(),
+  quantity: z.string().trim().max(50).optional().nullable(),
+  city: z.string().trim().max(100).optional().nullable(),
+  notes: z.string().trim().max(4000).optional().nullable(),
+});
+
 module.exports = {
+  contactSubmit,
+  enquirySubmit,
   profile,
   addressBody,
   designVersion,

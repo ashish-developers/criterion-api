@@ -33,6 +33,7 @@ const config = {
   appName: str("APP_NAME", "branding"),
   // Customer-facing name used in emails (matches NEXT_PUBLIC_BRAND_NAME in the web app).
   brandName: str("BRAND_NAME", "MingoKart"),
+  contactUsEmail: (str("CONTACT_US") || "sales@mingokart.com").replace(/['"]/g, "").trim(),
   appEnv,
   isProduction,
   isTest: appEnv === "test",
@@ -107,7 +108,7 @@ const config = {
       password: str("MAIL_PASSWORD"),
       fromAddress,
       fromName,
-      from: fromAddress ? (fromName ? `"${fromName}" <${fromAddress}>` : fromAddress) : str("MAIL_FROM", "Branding Platform <no-reply@localhost>"),
+      from: fromAddress ? (fromName ? `"${fromName}" <${fromAddress}>` : fromAddress) : str("MAIL_FROM", "MingoKart <no-reply@localhost>"),
       replyTo: str("MAIL_REPLY_TO"),
     };
   })(),
